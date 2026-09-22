@@ -5,12 +5,13 @@
 
 namespace minidb {
 
-// Options for the M0 shell. `database` is display-only; nothing is opened.
+// Options for the shell. `database` is display-only; nothing is opened.
 struct ReplOptions {
     std::string database{"local"};
 };
 
-// Line-oriented shell. Meta-commands are handled here. SQL is not parsed.
+// Line-oriented shell. Meta-commands are handled here. SQL is parsed and
+// printed as an AST summary. Statements are not executed.
 class Repl {
   public:
     Repl(std::istream& in, std::ostream& out, ReplOptions options = {});

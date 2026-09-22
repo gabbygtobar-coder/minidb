@@ -6,7 +6,7 @@ project(MiniDB
   LANGUAGES CXX
 )
 
-# M0 is a skeleton. The user-facing banner reports 0.1 (see include/minidb/version.hpp).
+# The user-facing banner reports 0.1 (see include/minidb/version.hpp).
 # The CMake project version stays 0.1.0 so packaging tools see a full version triple.
 
 set(CMAKE_CXX_STANDARD 17)
@@ -28,6 +28,9 @@ endfunction()
 
 add_library(minidb_core STATIC
   src/cli/repl.cpp
+  src/parser/ast.cpp
+  src/parser/lexer.cpp
+  src/parser/parser.cpp
 )
 target_include_directories(minidb_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -68,6 +71,8 @@ if(BUILD_TESTING)
   add_executable(minidb_tests
     tests/version_test.cpp
     tests/repl_test.cpp
+    tests/lexer_test.cpp
+    tests/parser_test.cpp
   )
   target_link_libraries(minidb_tests PRIVATE minidb_core GTest::gtest_main)
   minidb_set_warnings(minidb_tests)
