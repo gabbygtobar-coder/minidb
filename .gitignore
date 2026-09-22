@@ -26,6 +26,9 @@ Makefile
 *.pdb
 *.ilk
 
+# Database files created by the CLI
+*.db
+
 # Editor / OS
 .cache/
 .vscode/

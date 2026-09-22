@@ -3,6 +3,7 @@
 #include "minidb/execution_error.hpp"
 #include "minidb/executor.hpp"
 #include "minidb/parser.hpp"
+#include "minidb/storage_error.hpp"
 #include "minidb/version.hpp"
 
 #include <iostream>
@@ -78,27 +79,28 @@ void print_outcome(std::ostream& out, const StatementResult& outcome) {
 }  // namespace
 
 Repl::Repl(std::istream& in, std::ostream& out, ReplOptions options)
-    : in_(in), out_(out), options_(std::move(options)) {
-    if (options_.database.empty()) {
-        options_.database = "local";
-    }
-}
+    : in_(in),
+      out_(out),
+      options_(std::move(options)),
+      database_(options_.path.empty() ? Database() : Database(options_.path)) {}
 
 void Repl::print_banner() {
+    const std::string label = options_.path.empty() ? std::string("memory") : options_.path;
     out_ << "MiniDB v" << kVersion << '\n'
-         << "Database: " << options_.database << '\n'
+         << "Database: " << label << '\n'
          << std::flush;
 }
 
 void Repl::print_help() {
     out_ << "MiniDB meta-commands:\n"
          << "  .help            Show this message\n"
-         << "  .tables          List tables in memory\n"
+         << "  .tables          List tables\n"
          << "  .schema <table>  Show one table's columns\n"
          << "  .exit            Exit the shell\n"
          << "  .quit            Exit the shell\n"
          << "\n"
-         << "SQL runs against an in-memory database. Data is lost when the shell exits.\n"
+         << "SQL runs against the open database. A database file keeps tables and rows\n"
+         << "after the shell exits. An in-memory database is discarded when the shell exits.\n"
          << std::flush;
 }
 
@@ -156,6 +158,8 @@ int Repl::run() {
                  << error.what() << '\n'
                  << std::flush;
         } catch (const ExecutionError& error) {
+            out_ << "Error: " << error.what() << '\n' << std::flush;
+        } catch (const StorageError& error) {
             out_ << "Error: " << error.what() << '\n' << std::flush;
         }
     }

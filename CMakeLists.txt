@@ -34,6 +34,11 @@ add_library(minidb_core STATIC
   src/parser/ast.cpp
   src/parser/lexer.cpp
   src/parser/parser.cpp
+  src/storage/database.cpp
+  src/storage/page.cpp
+  src/storage/pager.cpp
+  src/storage/record.cpp
+  src/storage/slotted_page.cpp
 )
 target_include_directories(minidb_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -77,6 +82,9 @@ if(BUILD_TESTING)
     tests/lexer_test.cpp
     tests/parser_test.cpp
     tests/executor_test.cpp
+    tests/pager_test.cpp
+    tests/record_test.cpp
+    tests/persistence_test.cpp
   )
   target_link_libraries(minidb_tests PRIVATE minidb_core GTest::gtest_main)
   minidb_set_warnings(minidb_tests)

@@ -1,11 +1,11 @@
 # Examples
 
-M2 executes SQL against an in-memory catalog. The rows below exist only until the process exits.
+M3 executes SQL against a database file. The same path still has the tables after the process exits.
 
 ```text
-$ minidb
+$ ./build/minidb /tmp/minidb-demo.db
 MiniDB v0.1
-Database: local
+Database: /tmp/minidb-demo.db
 MiniDB> CREATE TABLE users (id INT, name TEXT, active BOOLEAN, score FLOAT);
 Created table users.
 MiniDB> INSERT INTO users VALUES (1, 'ada', TRUE, 3.14);
@@ -31,6 +31,22 @@ MiniDB> .tables
 users
 MiniDB> .schema users
 CREATE TABLE users (id INT, name TEXT, active BOOLEAN, score FLOAT);
+MiniDB> .exit
+```
+
+Start the shell again on that file:
+
+```text
+$ ./build/minidb /tmp/minidb-demo.db
+MiniDB v0.1
+Database: /tmp/minidb-demo.db
+MiniDB> .tables
+users
+MiniDB> SELECT id, name FROM users;
+id | name
+---+-------------
+1  | ada lovelace
+(1 row)
 MiniDB> DROP TABLE users;
 Dropped table users.
 MiniDB> .exit
@@ -45,13 +61,6 @@ MiniDB> SELECT 1;
 Parse error at 1:8: expected '*' or a column name, found integer '1'
 ```
 
-An optional argument is shown as the database name and is otherwise ignored:
-
-```text
-$ minidb /tmp/minidb-data
-MiniDB v0.1
-Database: /tmp/minidb-data
-MiniDB> .quit
-```
+With no argument, the file is `minidb.db` in the current directory. Each successful statement is flushed with `fflush`. That is not an `fsync`. A crash can still lose or tear the last write. See [docs/storage.md](../docs/storage.md).
 
 Blank lines are ignored. They do not print an error and they do not exit.

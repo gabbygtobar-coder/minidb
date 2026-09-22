@@ -8,7 +8,7 @@ This is the systems piece of a CS portfolio, after WorthIt and ThreatLens. Those
 
 ## Status
 
-**M2 — in-memory catalog and execution.** The shell parses one SQL statement and runs it against tables that live in the process. `CREATE TABLE`, `DROP TABLE`, `INSERT`, `SELECT`, `UPDATE`, and `DELETE` work, including `WHERE`. Data is discarded when the process exits. Persistence is M3; this milestone does not write page files.
+**M3 — page storage.** The shell parses one SQL statement and runs it against a database file. `CREATE TABLE`, `DROP TABLE`, `INSERT`, `SELECT`, `UPDATE`, and `DELETE` work, including `WHERE`. Tables and rows are still there after the process exits. The default file is `minidb.db` in the current directory. Indexes are M4. There is no write-ahead log and no `fsync`.
 
 ## Stack
 
@@ -25,10 +25,10 @@ GoogleTest is not a git submodule and it is not vendored. `FetchContent` pins th
 | M0 | CMake, CLI stub, GoogleTest, CI | Yes |
 | M1 | Lexer, parser, and AST for a tiny SQL subset | Yes |
 | M2 | In-memory catalog and execution, including `WHERE` | Yes |
-| M3 | On-disk pages so data survives restart | No |
+| M3 | On-disk pages so data survives restart | Yes |
 | M4 | One secondary index and a trivial access-path choice | No |
 
-Milestones land in order. The parser still does not execute statements. The executor consumes the AST from the outside.
+Milestones land in order. The parser does not execute statements. The executor reads and writes heap pages through the storage layer.
 
 ## SQL subset
 
@@ -91,7 +91,7 @@ The binary is `build/minidb`.
 
 ```bash
 ./build/minidb
-./build/minidb /tmp/minidb-data
+./build/minidb /tmp/minidb-demo.db
 ./build/minidb --help
 ```
 
@@ -99,11 +99,38 @@ The shell prints:
 
 ```text
 MiniDB v0.1
-Database: local
+Database: minidb.db
 MiniDB>
 ```
 
-With a path argument, the second line uses that path instead of `local`. The path is not created or read. Tables from the session are gone when the process exits.
+With a path argument, that file is opened or created and the second line prints the path you passed. An empty file is initialized. A non-empty file must already be a MiniDB database.
+
+Restart the shell on the same file and the tables are still there:
+
+```text
+$ rm -f /tmp/minidb-demo.db
+$ ./build/minidb /tmp/minidb-demo.db
+MiniDB v0.1
+Database: /tmp/minidb-demo.db
+MiniDB> CREATE TABLE users (id INT, name TEXT);
+Created table users.
+MiniDB> INSERT INTO users VALUES (1, 'ada');
+Inserted 1 row.
+MiniDB> .exit
+$ ./build/minidb /tmp/minidb-demo.db
+MiniDB v0.1
+Database: /tmp/minidb-demo.db
+MiniDB> .tables
+users
+MiniDB> SELECT * FROM users;
+id | name
+---+-----
+1  | ada
+(1 row)
+MiniDB> .exit
+```
+
+Each successful statement is flushed with `fflush` before the next prompt. That pushes the bytes to the operating system. It is not an `fsync`, and there is no log, so a crash or power loss can still lose or tear the last write. Details are in [docs/storage.md](docs/storage.md).
 
 | Input | Result |
 | --- | --- |
@@ -157,28 +184,32 @@ cmake --build build
 cd build && ctest --output-on-failure
 ```
 
-`minidb_tests` covers the version string, the shell, the lexer, the parser, and execution: create, insert, select, update, delete, `WHERE` on each type, type and arity errors, drop, and schema listing.
+`minidb_tests` covers the version string, the shell, the lexer, the parser, and execution: create, insert, select, update, delete, `WHERE` on each type, type and arity errors, drop, and schema listing. Storage tests cover page read/write, the free list, record and catalog bytes, and reopening a file after the `Database` object is destroyed.
 
 ## Layout
 
 ```text
-include/minidb/     public headers (version, shell, tokens, AST, catalog, executor)
+include/minidb/     public headers (version, shell, tokens, AST, catalog, executor, pages)
 src/main.cpp        process entry
 src/cli/            shell implementation
 src/parser/         lexer and parser
-src/catalog/        in-memory tables and cell values
+src/catalog/        table schema helpers and cell values
+src/storage/        pager, slotted heap pages, record bytes
 src/executor/       statement execution
 tests/              GoogleTest
-benchmarks/         placeholder until there is a storage path to measure
-docs/               architecture notes
-examples/           sample shell session
+benchmarks/         placeholder; the pager is not timed yet
+docs/               architecture and the on-disk format
+examples/           sample shell session, including a restart
 ```
 
 ## Limitations
 
-- Tables live in memory for one process. Exit, and the data is gone. M3 is the milestone that writes it to disk.
-- The optional data-directory argument is only copied into the banner. No file is created or read.
-- No indexes, planner, transactions, or concurrency control.
+- A statement is flushed with `fflush` only. There is no `fsync`, no write-ahead log, and no atomic multi-page commit. A crash can tear a page or drop writes the kernel has not sent to disk. A multi-row `UPDATE` or `DELETE` can be left partly applied.
+- One writer. Opening the same file from two processes is undefined; the file is not locked.
+- Every query is a heap scan. There is no index and no buffer-pool eviction: pages that have been read stay in memory.
+- A row, including its type tags, must fit on one 4 KiB page (4072 bytes of record payload).
+- The file does not shrink. Dropped pages go on an in-file free list and are reused.
+- No planner, transactions, or concurrency control.
 - No `NULL`, joins, expressions, `ORDER BY`, or multi-row `INSERT`.
 - The shell submits one line to the parser. It does not accumulate a statement across lines.
 - One process, one thread, stdin/stdout. There is no client/server protocol and no wire compatibility with PostgreSQL or MySQL.
