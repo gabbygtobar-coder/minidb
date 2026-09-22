@@ -1,0 +1,9 @@
+Built MiniDB — a from-scratch relational database engine in C++17.
+
+Not a wrapper around SQLite or Postgres. It has its own SQL subset, 4 KiB page file, B+ tree index, and an executor that chooses Index Scan vs Seq Scan. Tables and indexes survive restart. `.explain` shows the plan; a measured 10k-row point lookup went from ~2181 µs (heap scan) to ~11 µs (index) on the same warm-cache run.
+
+This is the systems piece of my portfolio after WorthIt and ThreatLens — storage and query execution, not another web app.
+
+Repo: https://github.com/gabbygtobar-coder/minidb
+
+Stack: C++17 · CMake · GoogleTest · custom pager + B+ tree

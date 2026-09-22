@@ -43,6 +43,12 @@ GoogleTest is not a git submodule and it is not vendored. `FetchContent` pins th
 
 ## Demo
 
+The GIF is a real CLI session: a point lookup is a Seq Scan, `CREATE INDEX` makes the same lookup an Index Scan, and reopening the file still uses that index.
+
+![MiniDB CLI session: Seq Scan, then Index Scan, then reopen](docs/demo/minidb-demo.gif)
+
+The same session is [minidb-demo.mp4](docs/demo/minidb-demo.mp4). The lines from the recording are [examples/minidb-demo-transcript.txt](examples/minidb-demo-transcript.txt). The text below is that session with `.indexes` added.
+
 ```bash
 rm -f /tmp/minidb-demo.db
 ./build/minidb /tmp/minidb-demo.db
@@ -223,8 +229,8 @@ src/executor/       statement execution and the scan choice
 tests/              GoogleTest
 bench/              point-lookup harness and one recorded run
 benchmarks/         pointer at bench/
-docs/               architecture, the heap file, and the B+ tree
-examples/           sample shell session, including a restart
+docs/               architecture, the heap file, the B+ tree, and the terminal demo
+examples/           sample shell session, including a restart and the demo transcript
 ```
 
 ## Limitations
