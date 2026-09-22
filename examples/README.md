@@ -2,6 +2,8 @@
 
 The shell runs SQL against a database file. The same path still has the tables and indexes after the process exits. `.explain` prints the scan and does not run the statement. Build first (`cmake -S . -B build && cmake --build build`). The transcript below matches `./build/minidb`.
 
+The README recording is [../docs/demo/minidb-demo.gif](../docs/demo/minidb-demo.gif). [minidb-demo-transcript.txt](minidb-demo-transcript.txt) is that session: Seq Scan, then Index Scan, then reopen. It does not run `.indexes`, `UPDATE`, or `DELETE`. Those are in the longer session below.
+
 ```text
 $ rm -f /tmp/minidb-demo.db
 $ ./build/minidb /tmp/minidb-demo.db

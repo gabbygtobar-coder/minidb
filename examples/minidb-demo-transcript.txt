@@ -1,0 +1,37 @@
+MiniDB v0.1
+Database: /tmp/minidb-demo.db
+MiniDB> CREATE TABLE users (id INT, name TEXT, active BOOLEAN, score FLOAT);
+Created table users.
+MiniDB> INSERT INTO users VALUES (1, 'ada', TRUE, 3.14);
+Inserted 1 row.
+MiniDB> INSERT INTO users VALUES (2, 'grace', FALSE, 10.0);
+Inserted 1 row.
+MiniDB> .explain SELECT id, name FROM users WHERE id = 1
+Seq Scan on users
+  Filter: id = 1
+MiniDB> CREATE INDEX idx_id ON users (id);
+Created index idx_id on users(id).
+MiniDB> .explain SELECT id, name FROM users WHERE id = 1
+Index Scan using idx_id on users
+  Index Cond: id = 1
+MiniDB> SELECT id, name FROM users WHERE id = 1;
+id | name
+---+-----
+1  | ada
+(1 row)
+MiniDB> .exit
+
+MiniDB v0.1
+Database: /tmp/minidb-demo.db
+MiniDB> .tables
+users
+MiniDB> .explain SELECT id, name FROM users WHERE id = 1
+Index Scan using idx_id on users
+  Index Cond: id = 1
+MiniDB> SELECT * FROM users;
+id | name  | active | score
+---+-------+--------+------
+1  | ada   | TRUE   | 3.14
+2  | grace | FALSE  | 10.0
+(2 rows)
+MiniDB> .exit
