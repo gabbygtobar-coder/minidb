@@ -30,6 +30,8 @@ enum class TokenKind {
     KwFloat,
     KwTrue,
     KwFalse,
+    KwIndex,
+    KwOn,
 
     Star,
     Comma,

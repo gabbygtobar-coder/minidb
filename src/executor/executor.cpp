@@ -148,6 +148,89 @@ bool matches(const std::vector<Value>& row, const Predicate& predicate) {
     return compare_values(row[predicate.column], predicate.op, predicate.expected);
 }
 
+struct ChosenScan {
+    bool use_index = false;
+    std::string index_name;
+    Database::IndexRange range;
+};
+
+bool indexable(ComparisonOp op) {
+    return op != ComparisonOp::NotEqual;
+}
+
+ChosenScan choose_scan(const Database& database, const Table& table,
+                       const std::optional<Predicate>& predicate) {
+    ChosenScan scan;
+    if (!predicate.has_value() || !indexable(predicate->op)) {
+        return scan;
+    }
+    const std::optional<std::string> index =
+        database.index_for_column(table.name, table.columns[predicate->column].name);
+    if (!index.has_value()) {
+        return scan;
+    }
+    scan.use_index = true;
+    scan.index_name = *index;
+    const Value& bound = predicate->expected;
+    switch (predicate->op) {
+        case ComparisonOp::Equal:
+            scan.range.low_unbounded = false;
+            scan.range.high_unbounded = false;
+            scan.range.low_inclusive = true;
+            scan.range.high_inclusive = true;
+            scan.range.low = bound;
+            scan.range.high = bound;
+            break;
+        case ComparisonOp::Less:
+            scan.range.high_unbounded = false;
+            scan.range.high_inclusive = false;
+            scan.range.high = bound;
+            break;
+        case ComparisonOp::LessEqual:
+            scan.range.high_unbounded = false;
+            scan.range.high_inclusive = true;
+            scan.range.high = bound;
+            break;
+        case ComparisonOp::Greater:
+            scan.range.low_unbounded = false;
+            scan.range.low_inclusive = false;
+            scan.range.low = bound;
+            break;
+        case ComparisonOp::GreaterEqual:
+            scan.range.low_unbounded = false;
+            scan.range.low_inclusive = true;
+            scan.range.low = bound;
+            break;
+        case ComparisonOp::NotEqual:
+            break;
+    }
+    return scan;
+}
+
+std::vector<StoredRow> read_matching(Database& database, const Table& table,
+                                     const std::optional<Predicate>& predicate, const ChosenScan& scan) {
+    std::vector<StoredRow> stored =
+        scan.use_index ? database.scan_index(table.name, scan.index_name, scan.range)
+                       : database.scan_rows(table.name);
+    if (!predicate.has_value()) {
+        return stored;
+    }
+    std::vector<StoredRow> matched;
+    for (StoredRow& row : stored) {
+        if (matches(row.values, *predicate)) {
+            matched.push_back(std::move(row));
+        }
+    }
+    return matched;
+}
+
+std::string plan_text(const std::string& table, const ChosenScan& scan) {
+    if (scan.use_index) {
+        return "Index Scan using " + scan.index_name + " on " + table;
+    }
+    return "Seq Scan on " + table;
+}
+
 StatementResult execute_create(Database& database, const CreateTableStatement& statement) {
     database.create_table(statement.name, statement.columns);
     StatementResult outcome;
@@ -159,6 +242,21 @@ StatementResult execute_drop(Database& database, const DropTableStatement& state
     database.drop_table(statement.name);
     StatementResult outcome;
     outcome.message = "Dropped table " + statement.name + ".";
+    return outcome;
+}
+
+StatementResult execute_create_index(Database& database, const CreateIndexStatement& statement) {
+    database.create_index(statement.name, statement.table, statement.column);
+    StatementResult outcome;
+    outcome.message = "Created index " + statement.name + " on " + statement.table + "(" +
+                      statement.column + ").";
+    return outcome;
+}
+
+StatementResult execute_drop_index(Database& database, const DropIndexStatement& statement) {
+    database.drop_index(statement.name);
+    StatementResult outcome;
+    outcome.message = "Dropped index " + statement.name + ".";
     return outcome;
 }
 
@@ -206,17 +304,15 @@ StatementResult execute_select(Database& database, const SelectStatement& statem
     const Table& table = database.require_table(statement.table);
     const std::vector<std::size_t> indexes = projection(table, statement);
     const std::optional<Predicate> predicate = bind_where(table, statement.where);
+    const ChosenScan scan = choose_scan(database, table, predicate);
 
     ResultSet result;
     result.column_names.reserve(indexes.size());
     for (const std::size_t index : indexes) {
         result.column_names.push_back(table.columns[index].name);
     }
-    for (const StoredRow& stored : database.scan_rows(table.name)) {
+    for (const StoredRow& stored : read_matching(database, table, predicate, scan)) {
         const std::vector<Value>& row = stored.values;
-        if (predicate.has_value() && !matches(row, *predicate)) {
-            continue;
-        }
         std::vector<std::string> cells;
         cells.reserve(indexes.size());
         for (const std::size_t index : indexes) {
@@ -236,13 +332,11 @@ StatementResult execute_update(Database& database, const UpdateStatement& statem
     const Value value =
         value_from_literal(statement.value, table.columns[index].type, statement.column);
     const std::optional<Predicate> predicate = bind_where(table, statement.where);
+    const ChosenScan scan = choose_scan(database, table, predicate);
 
-    std::vector<StoredRow> stored_rows = database.scan_rows(table.name);
+    std::vector<StoredRow> stored_rows = read_matching(database, table, predicate, scan);
     std::size_t count = 0;
     for (StoredRow& stored : stored_rows) {
-        if (predicate.has_value() && !matches(stored.values, *predicate)) {
-            continue;
-        }
         stored.values[index] = value;
         database.update_row(table.name, stored.id, std::move(stored.values));
         ++count;
@@ -256,6 +350,7 @@ StatementResult execute_update(Database& database, const UpdateStatement& statem
 StatementResult execute_delete(Database& database, const DeleteStatement& statement) {
     Table& table = database.require_table(statement.table);
     const std::optional<Predicate> predicate = bind_where(table, statement.where);
+    const ChosenScan scan = choose_scan(database, table, predicate);
 
     std::size_t count = 0;
     if (!predicate.has_value()) {
@@ -263,10 +358,8 @@ StatementResult execute_delete(Database& database, const DeleteStatement& statem
         database.clear_rows(table.name);
     } else {
         std::vector<RowId> ids;
-        for (const StoredRow& stored : database.scan_rows(table.name)) {
-            if (matches(stored.values, *predicate)) {
-                ids.push_back(stored.id);
-            }
+        for (const StoredRow& stored : read_matching(database, table, predicate, scan)) {
+            ids.push_back(stored.id);
         }
         for (const RowId id : ids) {
             database.delete_row(table.name, id);
@@ -295,6 +388,12 @@ struct StatementExecutor {
     StatementResult operator()(const DropTableStatement& statement) const {
         return execute_drop(database, statement);
     }
+    StatementResult operator()(const CreateIndexStatement& statement) const {
+        return execute_create_index(database, statement);
+    }
+    StatementResult operator()(const DropIndexStatement& statement) const {
+        return execute_drop_index(database, statement);
+    }
     StatementResult operator()(const InsertStatement& statement) const {
         return execute_insert(database, statement);
     }
@@ -313,6 +412,28 @@ struct StatementExecutor {
 
 StatementResult execute(Database& database, const Statement& statement) {
     return std::visit(StatementExecutor{database}, statement);
+}
+
+std::string explain_statement(const Database& database, const Statement& statement) {
+    if (const auto* select = std::get_if<SelectStatement>(&statement)) {
+        const Table& table = database.require_table(select->table);
+        const std::optional<Predicate> predicate = bind_where(table, select->where);
+        return plan_text(table.name, choose_scan(database, table, predicate));
+    }
+    if (const auto* update = std::get_if<UpdateStatement>(&statement)) {
+        const Table& table = database.require_table(update->table);
+        require_column(table, update->column);
+        value_from_literal(update->value, table.columns[require_column(table, update->column)].type,
+                           update->column);
+        const std::optional<Predicate> predicate = bind_where(table, update->where);
+        return plan_text(table.name, choose_scan(database, table, predicate));
+    }
+    if (const auto* deleted = std::get_if<DeleteStatement>(&statement)) {
+        const Table& table = database.require_table(deleted->table);
+        const std::optional<Predicate> predicate = bind_where(table, deleted->where);
+        return plan_text(table.name, choose_scan(database, table, predicate));
+    }
+    return "No scan";
 }
 
 std::string format_result_set(const ResultSet& result) {

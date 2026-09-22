@@ -46,7 +46,9 @@ Page 0 is never a heap page and cannot be freed.
 
 ## Heap page
 
-Every page except page 0 and free-list pages is a slotted heap page.
+Heap pages and the catalog use the slotted layout below. Index pages are type `3` and are not slotted heap pages; their layout is [index.md](index.md). A free-list page is type `2`. Page 0 is the header.
+
+Every heap page is a slotted page.
 
 | Offset | Size | Field |
 | --- | --- | --- |
@@ -113,11 +115,21 @@ u32  tail page
 u32  overflow list head (0 if none)
 ```
 
+When the table has at least one index, the entry continues. An entry with no indexes ends at `overflow_head`, which is the M3 encoding.
+
+```text
+u16  index count
+repeated:
+  u16  index-name length, then the name bytes
+  u16  column index (0-based into the column list above)
+  u32  B+ tree root page id
+```
+
 The catalog itself is a heap chain starting at the catalog root. Dropping a table tombstones its catalog slot. Names stay case-sensitive (`Users` and `users` are different tables). Table names are listed in lexicographic order from the in-memory map built at open, not in catalog-slot order.
 
 ## What this is not
 
-- No B-tree and no secondary index. Every `SELECT`, `UPDATE`, and `DELETE` is a heap scan. That is M4.
+- No index other than the single-column B+ tree in [index.md](index.md). A predicate that cannot use one is a heap scan.
 - No transactions, savepoints, or isolation.
 - No buffer-pool eviction. Touched pages stay in the process.
 - No checksums. A torn page is not detected until a later read fails a bounds or type check, and it might not fail.

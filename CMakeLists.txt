@@ -31,6 +31,7 @@ add_library(minidb_core STATIC
   src/catalog/value.cpp
   src/cli/repl.cpp
   src/executor/executor.cpp
+  src/index/btree.cpp
   src/parser/ast.cpp
   src/parser/lexer.cpp
   src/parser/parser.cpp
@@ -85,6 +86,8 @@ if(BUILD_TESTING)
     tests/pager_test.cpp
     tests/record_test.cpp
     tests/persistence_test.cpp
+    tests/btree_test.cpp
+    tests/index_test.cpp
   )
   target_link_libraries(minidb_tests PRIVATE minidb_core GTest::gtest_main)
   minidb_set_warnings(minidb_tests)

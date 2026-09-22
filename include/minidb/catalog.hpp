@@ -67,6 +67,34 @@ class Database {
     void delete_row(const std::string& name, RowId id);
     void clear_rows(const std::string& name);
 
+    // Single-column secondary indexes. Names are unique in the database and
+    // case-sensitive. `index_names` is lexicographic. `index_for_column`
+    // returns the oldest index on that column, if any.
+    void create_index(std::string index_name, const std::string& table, const std::string& column);
+    void drop_index(const std::string& index_name);
+    std::vector<std::string> index_names() const;
+    std::optional<std::string> index_for_column(const std::string& table,
+                                                const std::string& column) const;
+
+    // Inclusive or exclusive bounds on the indexed column. Unbounded sides
+    // ignore the corresponding value. Rows come back in index order
+    // (column, then row id), not heap insertion order.
+    struct IndexRange {
+        bool low_unbounded = true;
+        bool low_inclusive = true;
+        bool high_unbounded = true;
+        bool high_inclusive = true;
+        Value low = Value::integer(0);
+        Value high = Value::integer(0);
+    };
+
+    std::vector<StoredRow> scan_index(const std::string& table, const std::string& index_name,
+                                      const IndexRange& range) const;
+
+    // See Pager::read_count. Counts every page access, including cache hits.
+    void reset_page_reads();
+    std::uint64_t page_reads() const;
+
   private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

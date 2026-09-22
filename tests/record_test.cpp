@@ -117,4 +117,15 @@ TEST(Record, CatalogEntryRoundTripAndBytes) {
     EXPECT_EQ(decoded.overflow_head, 12u);
 
     EXPECT_THROW(minidb::decode_catalog_entry(stored.data(), 2), minidb::StorageError);
+
+    entry.indexes.push_back({"idx", 0, 7});
+    const std::vector<std::uint8_t> with_index = minidb::encode_catalog_entry(entry);
+    EXPECT_GT(with_index.size(), stored.size());
+    const minidb::CatalogEntry indexed =
+        minidb::decode_catalog_entry(with_index.data(), with_index.size());
+    ASSERT_EQ(indexed.indexes.size(), 1u);
+    EXPECT_EQ(indexed.indexes[0].name, "idx");
+    EXPECT_EQ(indexed.indexes[0].column, 0u);
+    EXPECT_EQ(indexed.indexes[0].root_page, 7u);
+    EXPECT_EQ(indexed.head_page, 4u);
 }

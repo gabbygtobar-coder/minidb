@@ -1,6 +1,6 @@
 # Examples
 
-M3 executes SQL against a database file. The same path still has the tables after the process exits.
+M4 executes SQL against a database file. The same path still has the tables and indexes after the process exits.
 
 ```text
 $ ./build/minidb /tmp/minidb-demo.db
@@ -31,6 +31,15 @@ MiniDB> .tables
 users
 MiniDB> .schema users
 CREATE TABLE users (id INT, name TEXT, active BOOLEAN, score FLOAT);
+MiniDB> CREATE INDEX idx_id ON users (id);
+Created index idx_id on users(id).
+MiniDB> .explain SELECT id, name FROM users WHERE id = 1
+Index Scan using idx_id on users
+MiniDB> SELECT id, name FROM users WHERE id = 1;
+id | name
+---+-------------
+1  | ada lovelace
+(1 row)
 MiniDB> .exit
 ```
 
@@ -42,7 +51,9 @@ MiniDB v0.1
 Database: /tmp/minidb-demo.db
 MiniDB> .tables
 users
-MiniDB> SELECT id, name FROM users;
+MiniDB> .explain SELECT id, name FROM users WHERE id = 1
+Index Scan using idx_id on users
+MiniDB> SELECT id, name FROM users WHERE id = 1;
 id | name
 ---+-------------
 1  | ada lovelace

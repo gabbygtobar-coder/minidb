@@ -38,7 +38,16 @@ struct StatementResult {
 //     IEEE value with no tolerance.
 //   - TEXT and BOOLEAN allow only = and !=. TEXT equality is byte-wise and
 //     case-sensitive. Ordering either type is an execution error.
+//
+// A WHERE comparison other than != uses an index when one exists on that
+// column. != and a missing index scan the heap. Index scans return rows in
+// index order. Heap scans stay in insertion order.
 StatementResult execute(Database& database, const Statement& statement);
+
+// Plan text for `.explain`. Does not modify the database. SELECT, UPDATE, and
+// DELETE report `Index Scan using <name> on <table>` or `Seq Scan on <table>`.
+// Other statements report `No scan`.
+std::string explain_statement(const Database& database, const Statement& statement);
 
 // Aligned text table plus a "(N row)" / "(N rows)" footer. No trailing newline.
 std::string format_result_set(const ResultSet& result);

@@ -71,6 +71,7 @@ struct Pager::Impl {
     std::uint32_t catalog_root = 1;
     std::uint32_t catalog_tail = 1;
     std::uint32_t free_head = 0;
+    mutable std::uint64_t reads = 0;
 
     void store_header() {
         Page header = frames[0].page;
@@ -114,6 +115,7 @@ struct Pager::Impl {
     }
 
     Page read_page(std::uint32_t page_id) const {
+        ++reads;
         if (page_id >= page_count) {
             throw StorageError("Page " + std::to_string(page_id) + " is outside the file");
         }
@@ -349,6 +351,14 @@ void Pager::set_catalog_tail(std::uint32_t page_id) {
 
 void Pager::flush() {
     impl_->flush();
+}
+
+std::uint64_t Pager::read_count() const {
+    return impl_->reads;
+}
+
+void Pager::reset_read_count() {
+    impl_->reads = 0;
 }
 
 }  // namespace minidb

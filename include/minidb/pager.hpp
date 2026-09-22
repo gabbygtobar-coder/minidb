@@ -44,6 +44,11 @@ class Pager {
     // Push dirty pages to the OS. File pagers call fflush and stop there.
     void flush();
 
+    // Logical page reads, including pages served from the in-memory cache.
+    // Used to compare an index lookup with a heap scan. Not a disk-I/O count.
+    std::uint64_t read_count() const;
+    void reset_read_count();
+
   private:
     struct Impl;
     explicit Pager(std::unique_ptr<Impl> impl);

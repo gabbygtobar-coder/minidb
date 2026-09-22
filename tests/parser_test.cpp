@@ -211,6 +211,28 @@ TEST(Parser, UpdateAndDelete) {
               "Delete FROM users WHERE id != 2");
 }
 
+TEST(Parser, CreateAndDropIndex) {
+    const minidb::Statement created = parse("CREATE INDEX idx ON users (id)");
+    const auto* create = std::get_if<minidb::CreateIndexStatement>(&created);
+    ASSERT_NE(create, nullptr);
+    EXPECT_EQ(create->name, "idx");
+    EXPECT_EQ(create->table, "users");
+    EXPECT_EQ(create->column, "id");
+    EXPECT_EQ(minidb::format_statement(created), "CreateIndex idx ON users (id)");
+    EXPECT_EQ(minidb::format_statement(parse("create index Idx on Users (Name);")),
+              "CreateIndex Idx ON Users (Name)");
+
+    const minidb::Statement dropped = parse("DROP INDEX idx");
+    const auto* drop = std::get_if<minidb::DropIndexStatement>(&dropped);
+    ASSERT_NE(drop, nullptr);
+    EXPECT_EQ(drop->name, "idx");
+    EXPECT_EQ(minidb::format_statement(dropped), "DropIndex idx");
+
+    EXPECT_THROW(parse("CREATE INDEX idx ON users"), minidb::ParseError);
+    EXPECT_THROW(parse("CREATE INDEX idx ON users ()"), minidb::ParseError);
+    EXPECT_THROW(parse("DROP INDEX"), minidb::ParseError);
+}
+
 TEST(Parser, AllowsNewlinesInsideOneStatement) {
     EXPECT_EQ(minidb::format_statement(parse("SELECT *\nFROM users\nWHERE id = 1")),
               "Select * FROM users WHERE id = 1");
