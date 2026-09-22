@@ -6,6 +6,7 @@
 #include "minidb/storage_error.hpp"
 #include "minidb/version.hpp"
 
+#include <cctype>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -47,13 +48,31 @@ bool is_identifier(std::string_view text) {
     return true;
 }
 
-// True when `command` is `name` or `name` followed by whitespace.
-bool is_meta(const std::string& command, std::string_view name) {
-    if (command.size() < name.size() || command.compare(0, name.size(), name) != 0) {
-        return false;
+// The command word, lowercased, up to the first whitespace.
+// `.EXPLAIN` and `.explain` are the same command. The rest of the line is not
+// folded: table names and SQL stay case-sensitive.
+std::string meta_head(const std::string& command) {
+    std::string head;
+    head.reserve(command.size());
+    for (const char ch : command) {
+        if (kWhitespace.find(ch) != std::string_view::npos) {
+            break;
+        }
+        head.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
     }
-    return command.size() == name.size() ||
-           kWhitespace.find(command[name.size()]) != std::string_view::npos;
+    return head;
+}
+
+void print_indexes(std::ostream& out, const Database& database) {
+    const std::vector<IndexInfo> indexes = database.list_indexes();
+    if (indexes.empty()) {
+        out << "(no indexes)\n" << std::flush;
+        return;
+    }
+    for (const IndexInfo& index : indexes) {
+        out << index.name << " ON " << index.table << " (" << index.column << ")\n";
+    }
+    out << std::flush;
 }
 
 void print_tables(std::ostream& out, const Database& database) {
@@ -93,15 +112,19 @@ void Repl::print_banner() {
 
 void Repl::print_help() {
     out_ << "MiniDB meta-commands:\n"
-         << "  .help            Show this message\n"
-         << "  .tables          List tables\n"
-         << "  .schema <table>  Show one table's columns\n"
-         << "  .explain <sql>   Show Index Scan or Seq Scan for one statement\n"
-         << "  .exit            Exit the shell\n"
-         << "  .quit            Exit the shell\n"
+         << "  .help              Show this message\n"
+         << "  .tables            List tables\n"
+         << "  .schema <table>    Show one table's columns\n"
+         << "  .indexes           List indexes\n"
+         << "  .explain <sql>     Show Seq Scan or Index Scan without running it\n"
+         << "  .exit              Exit the shell\n"
+         << "  .quit              Exit the shell\n"
          << "\n"
-         << "SQL runs against the open database. A database file keeps tables and rows\n"
-         << "after the shell exits. An in-memory database is discarded when the shell exits.\n"
+         << "Command names are case-insensitive. .EXPLAIN and .explain are the same.\n"
+         << "SQL runs against the open database. A database file keeps tables, rows, and\n"
+         << "indexes after the shell exits. An in-memory database is discarded when the shell exits.\n"
+         << ".explain prints the scan and, when there is a WHERE clause, the filter or index\n"
+         << "condition. It does not run the statement and it does not estimate a cost.\n"
          << std::flush;
 }
 
@@ -121,20 +144,25 @@ int Repl::run() {
         if (command.empty()) {
             continue;
         }
-        if (command == ".exit" || command == ".quit") {
+        const std::string head = meta_head(command);
+        const bool bare = command.size() == head.size();
+        if (bare && (head == ".exit" || head == ".quit")) {
             return 0;
         }
-        if (command == ".help") {
+        if (bare && head == ".help") {
             print_help();
             continue;
         }
-        if (command == ".tables") {
+        if (bare && head == ".tables") {
             print_tables(out_, database_);
             continue;
         }
-        if (is_meta(command, ".schema")) {
-            const std::string argument =
-                trim_copy(std::string_view(command).substr(std::string(".schema").size()));
+        if (bare && head == ".indexes") {
+            print_indexes(out_, database_);
+            continue;
+        }
+        if (head == ".schema") {
+            const std::string argument = trim_copy(std::string_view(command).substr(head.size()));
             if (!is_identifier(argument)) {
                 out_ << "Usage: .schema <table>\n" << std::flush;
                 continue;
@@ -146,9 +174,8 @@ int Repl::run() {
             }
             continue;
         }
-        if (is_meta(command, ".explain")) {
-            const std::string sql =
-                trim_copy(std::string_view(command).substr(std::string(".explain").size()));
+        if (head == ".explain") {
+            const std::string sql = trim_copy(std::string_view(command).substr(head.size()));
             if (sql.empty()) {
                 out_ << "Usage: .explain <sql>\n" << std::flush;
                 continue;

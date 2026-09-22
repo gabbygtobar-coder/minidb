@@ -53,6 +53,14 @@ add_executable(minidb
 target_link_libraries(minidb PRIVATE minidb_core)
 minidb_set_warnings(minidb)
 
+# Point-lookup measurement. Not part of ctest. See bench/run_point_lookup.sh.
+add_executable(minidb_bench
+  bench/point_lookup.cpp
+)
+target_link_libraries(minidb_bench PRIVATE minidb_core)
+target_compile_definitions(minidb_bench PRIVATE MINIDB_BENCH_CONFIG="${CMAKE_BUILD_TYPE}")
+minidb_set_warnings(minidb_bench)
+
 include(CTest)
 
 if(BUILD_TESTING)
