@@ -2,6 +2,6 @@
 
 No benchmarks yet.
 
-M1 parses a line and prints an AST. It does not execute SQL or touch storage. Timing that would not say anything about a database.
+M2 executes SQL against tables in memory and throws that state away on exit. There is no page cache or index to compare.
 
-Add benchmarks here once there is an executor or a storage path worth comparing (M2 and later).
+Add benchmarks here once a storage path is worth measuring (M3 and later).

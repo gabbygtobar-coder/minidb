@@ -27,7 +27,10 @@ function(minidb_set_warnings target)
 endfunction()
 
 add_library(minidb_core STATIC
+  src/catalog/catalog.cpp
+  src/catalog/value.cpp
   src/cli/repl.cpp
+  src/executor/executor.cpp
   src/parser/ast.cpp
   src/parser/lexer.cpp
   src/parser/parser.cpp
@@ -73,6 +76,7 @@ if(BUILD_TESTING)
     tests/repl_test.cpp
     tests/lexer_test.cpp
     tests/parser_test.cpp
+    tests/executor_test.cpp
   )
   target_link_libraries(minidb_tests PRIVATE minidb_core GTest::gtest_main)
   minidb_set_warnings(minidb_tests)
