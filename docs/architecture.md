@@ -1,6 +1,6 @@
 # Architecture
 
-M3 has a process entry point, a shell, a SQL front end, a page file, and an executor. Rows and table schemas are stored in that file.
+M4 has a process entry point, a shell, a SQL front end, a page file, a B+ tree index, and an executor. Rows, table schemas, and index nodes are stored in that file.
 
 ## What exists
 
@@ -14,17 +14,18 @@ M3 has a process entry point, a shell, a SQL front end, a page file, and an exec
 - `src/storage/slotted_page.cpp` is the heap page: a slot directory, tombstones, and a forward pointer when an updated row no longer fits beside its neighbors.
 - `src/storage/database.cpp` (`minidb::Database`) loads the catalog from those pages and applies create, drop, insert, update, delete, and heap scan. `Database()` with no path uses an in-memory pager so tests can run without a file. Destroying a file-backed database flushes it.
 - `src/catalog/value.cpp` stores one cell as `INT`, `FLOAT`, `TEXT`, or `BOOLEAN`.
-- `src/executor/executor.cpp` (`minidb::execute`) visits one AST node. It does not lex, parse, or open files. It calls `Database` for every read and write. `WHERE` still lives here.
+- `src/index/btree.cpp` is the B+ tree. Nodes are index pages in the pager. It does not know SQL. `Database` encodes column values, stores the root page id in the catalog, and calls the tree on insert, update, and delete.
+- `src/executor/executor.cpp` (`minidb::execute`) visits one AST node. It does not lex, parse, or open files. It calls `Database` for every read and write. `WHERE` still lives here. A comparison other than `!=` reads the index when the catalog has one on that column. `.explain` uses the same choice and does not run the statement.
 
 `include/minidb/` is the public header surface. Tests link the same static library as the `minidb` binary (`minidb_core`), so the shell and the executor can be driven without a terminal.
 
-The AST is a `std::variant` of statement structs: `CreateTableStatement`, `DropTableStatement`, `InsertStatement`, `SelectStatement`, `UpdateStatement`, and `DeleteStatement`. Literals carry the source spelling and a typed value (`int64`, `double`, `bool`, or string). The executor accepts a literal only when its kind matches the column type. `WHERE` on `TEXT` and `BOOLEAN` allows only `=` and `!=`.
+The AST is a `std::variant` of statement structs: `CreateTableStatement`, `DropTableStatement`, `CreateIndexStatement`, `DropIndexStatement`, `InsertStatement`, `SelectStatement`, `UpdateStatement`, and `DeleteStatement`. Literals carry the source spelling and a typed value (`int64`, `double`, `bool`, or string). The executor accepts a literal only when its kind matches the column type. `WHERE` on `TEXT` and `BOOLEAN` allows only `=` and `!=`.
 
-The on-disk layout is [storage.md](storage.md).
+The heap layout is [storage.md](storage.md). The B+ tree layout is [index.md](index.md).
 
 ## What does not exist
 
-No write-ahead log, no `fsync`, no page checksum, no index, and no wire protocol. A crash can tear a page. Queries are heap scans. Pages that have been read stay in memory; nothing evicts them.
+No write-ahead log, no `fsync`, no page checksum, and no wire protocol. A crash can tear a page or leave an index disagreeing with the heap. Queries with no usable index are heap scans. Pages that have been read stay in memory; nothing evicts them.
 
 ## Intended layering
 
@@ -32,8 +33,8 @@ No write-ahead log, no `fsync`, no page checksum, no index, and no wire protocol
 CLI (M0)
   -> front end: lexer, parser, AST (M1)
     -> executor (M2)
-      -> pages and heap files (M3)   <- this tree
-        -> index and a small planner choice (M4)
+      -> pages and heap files (M3)
+        -> B+ tree index and a scan choice (M4)   <- this tree
 ```
 
-The lexer does not call the parser. The parser does not call the executor. The executor does not call the parser, and it does not call the pager directly. Storage is reached through `Database`.
+The lexer does not call the parser. The parser does not call the executor. The executor does not call the parser, and it does not call the pager directly. Storage is reached through `Database`. The B+ tree is reached through `Database`, not from the executor.

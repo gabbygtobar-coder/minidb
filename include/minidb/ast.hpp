@@ -62,6 +62,16 @@ struct DropTableStatement {
     std::string name;
 };
 
+struct CreateIndexStatement {
+    std::string name;
+    std::string table;
+    std::string column;
+};
+
+struct DropIndexStatement {
+    std::string name;
+};
+
 struct InsertStatement {
     std::string table;
     std::vector<Literal> values;
@@ -88,6 +98,8 @@ struct DeleteStatement {
 
 using Statement = std::variant<CreateTableStatement,
                                DropTableStatement,
+                               CreateIndexStatement,
+                               DropIndexStatement,
                                InsertStatement,
                                SelectStatement,
                                UpdateStatement,

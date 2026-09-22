@@ -1,11 +1,14 @@
 #include "minidb/catalog.hpp"
 
+#include "minidb/btree.hpp"
 #include "minidb/execution_error.hpp"
 #include "minidb/pager.hpp"
 #include "minidb/record.hpp"
 #include "minidb/storage_error.hpp"
 #include "slotted_page.hpp"
 
+#include <algorithm>
+#include <limits>
 #include <map>
 #include <utility>
 
@@ -58,6 +61,12 @@ std::vector<Value> decode_checked(const Table& table, const std::vector<std::uin
 }  // namespace
 
 struct Database::Impl {
+    struct IndexRecord {
+        std::string name;
+        std::uint16_t column = 0;
+        std::uint32_t root_page = 0;
+    };
+
     struct TableRecord {
         Table table;
         std::uint32_t head_page = 0;
@@ -65,6 +74,7 @@ struct Database::Impl {
         std::uint32_t overflow_head = 0;
         std::uint32_t catalog_page = 0;
         std::uint16_t catalog_slot = 0;
+        std::vector<IndexRecord> indexes;
     };
 
     struct SlotRef {
@@ -86,8 +96,18 @@ struct Database::Impl {
     void unlink_overflow(TableRecord& meta, std::uint32_t page_id);
     std::vector<std::uint8_t> payload(std::uint32_t page_id, std::uint16_t slot) const;
 
+    IndexKey make_key(const Value& value, RowId id) const;
+    void ensure_index_values(const TableRecord& meta, const std::vector<Value>& row) const;
+    bool insert_indexes(TableRecord& meta, RowId id, const std::vector<Value>& row);
+    bool remove_indexes(TableRecord& meta, RowId id, const std::vector<Value>& row);
+    bool replace_indexes(TableRecord& meta, RowId id, const std::vector<Value>& old_row,
+                         const std::vector<Value>& new_row);
+    const IndexRecord* find_index(const TableRecord& meta, const std::string& index_name) const;
+
     Pager pager;
     std::map<std::string, TableRecord> tables;
+    // Index name -> table name. Names are unique in the whole database.
+    std::map<std::string, std::string> index_owner;
 };
 
 Database::Impl::TableRecord& Database::Impl::require(const std::string& name) {
@@ -137,6 +157,23 @@ void Database::Impl::load_catalog() {
             record.overflow_head = decoded.overflow_head;
             record.catalog_page = page_id;
             record.catalog_slot = slot;
+            for (const IndexCatalog& index : decoded.indexes) {
+                if (index.column >= record.table.columns.size() || index.root_page == 0 ||
+                    index.root_page >= pager.page_count() ||
+                    index_owner.find(index.name) != index_owner.end()) {
+                    throw StorageError("Corrupt catalog entry");
+                }
+                const Page root = pager.read_page(index.root_page);
+                if (root.read_u8(0) != kPageTypeIndex) {
+                    throw StorageError("Corrupt catalog entry");
+                }
+                IndexRecord stored;
+                stored.name = index.name;
+                stored.column = index.column;
+                stored.root_page = index.root_page;
+                index_owner.emplace(stored.name, record.table.name);
+                record.indexes.push_back(std::move(stored));
+            }
             tables.emplace(record.table.name, std::move(record));
         }
         page_id = slotted::next_page(page);
@@ -150,6 +187,14 @@ void Database::Impl::persist(const TableRecord& meta) {
     entry.head_page = meta.head_page;
     entry.tail_page = meta.tail_page;
     entry.overflow_head = meta.overflow_head;
+    entry.indexes.reserve(meta.indexes.size());
+    for (const IndexRecord& index : meta.indexes) {
+        IndexCatalog stored;
+        stored.name = index.name;
+        stored.column = index.column;
+        stored.root_page = index.root_page;
+        entry.indexes.push_back(std::move(stored));
+    }
     const std::vector<std::uint8_t> bytes = encode_catalog_entry(entry);
     Page page = pager.read_page(meta.catalog_page);
     if (!slotted::rewrite_slot(page, meta.catalog_slot, bytes.data(), bytes.size())) {
@@ -296,6 +341,77 @@ std::vector<std::uint8_t> Database::Impl::payload(std::uint32_t page_id, std::ui
     return target.bytes;
 }
 
+IndexKey Database::Impl::make_key(const Value& value, RowId id) const {
+    IndexKey key;
+    key.column = encode_index_column(value);
+    key.page_id = id.page_id;
+    key.slot = id.slot;
+    return key;
+}
+
+void Database::Impl::ensure_index_values(const TableRecord& meta, const std::vector<Value>& row) const {
+    for (const IndexRecord& index : meta.indexes) {
+        const Value& value = row[index.column];
+        if (value.type() == DataType::Text && value.text().size() > kMaxIndexKeyBytes) {
+            throw ExecutionError("Value for indexed column " + meta.table.columns[index.column].name +
+                                 " exceeds " + std::to_string(kMaxIndexKeyBytes) + " bytes");
+        }
+    }
+}
+
+bool Database::Impl::insert_indexes(TableRecord& meta, RowId id, const std::vector<Value>& row) {
+    bool changed = false;
+    for (IndexRecord& index : meta.indexes) {
+        const std::uint32_t before = index.root_page;
+        std::uint32_t root = index.root_page;
+        btree_insert(pager, root, make_key(row[index.column], id));
+        index.root_page = root;
+        changed = changed || root != before;
+    }
+    return changed;
+}
+
+bool Database::Impl::remove_indexes(TableRecord& meta, RowId id, const std::vector<Value>& row) {
+    bool changed = false;
+    for (IndexRecord& index : meta.indexes) {
+        const std::uint32_t before = index.root_page;
+        std::uint32_t root = index.root_page;
+        btree_remove(pager, root, make_key(row[index.column], id));
+        index.root_page = root;
+        changed = changed || root != before;
+    }
+    return changed;
+}
+
+bool Database::Impl::replace_indexes(TableRecord& meta, RowId id, const std::vector<Value>& old_row,
+                                     const std::vector<Value>& new_row) {
+    bool changed = false;
+    for (IndexRecord& index : meta.indexes) {
+        const IndexKey old_key = make_key(old_row[index.column], id);
+        const IndexKey new_key = make_key(new_row[index.column], id);
+        if (compare_index_keys(old_key, new_key) == 0) {
+            continue;
+        }
+        const std::uint32_t before = index.root_page;
+        std::uint32_t root = index.root_page;
+        btree_remove(pager, root, old_key);
+        btree_insert(pager, root, new_key);
+        index.root_page = root;
+        changed = changed || root != before;
+    }
+    return changed;
+}
+
+const Database::Impl::IndexRecord* Database::Impl::find_index(const TableRecord& meta,
+                                                             const std::string& index_name) const {
+    for (const IndexRecord& index : meta.indexes) {
+        if (index.name == index_name) {
+            return &index;
+        }
+    }
+    return nullptr;
+}
+
 Database::Database() : impl_(std::make_unique<Impl>(Pager::open_memory())) {
     impl_->load_catalog();
 }
@@ -340,12 +456,21 @@ void Database::create_table(std::string name, std::vector<ColumnDefinition> colu
 
 void Database::drop_table(const std::string& name) {
     Impl::TableRecord meta = impl_->require(name);
+    std::vector<std::uint32_t> index_roots;
+    index_roots.reserve(meta.indexes.size());
+    for (const Impl::IndexRecord& index : meta.indexes) {
+        index_roots.push_back(index.root_page);
+        impl_->index_owner.erase(index.name);
+    }
     impl_->free_chain(meta.head_page);
     impl_->free_chain(meta.overflow_head);
     Page catalog = impl_->pager.read_page(meta.catalog_page);
     slotted::tombstone_slot(catalog, meta.catalog_slot);
     impl_->pager.write_page(meta.catalog_page, catalog);
     impl_->tables.erase(name);
+    for (const std::uint32_t root : index_roots) {
+        btree_destroy(impl_->pager, root);
+    }
     impl_->pager.flush();
 }
 
@@ -399,14 +524,17 @@ std::vector<StoredRow> Database::scan_rows(const std::string& name) const {
 void Database::insert_row(const std::string& name, std::vector<Value> row) {
     Impl::TableRecord& meta = impl_->require(name);
     ensure_row(meta.table, row);
+    impl_->ensure_index_values(meta, row);
     const std::vector<std::uint8_t> bytes = encode_values(row);
     std::uint32_t head = meta.head_page;
     std::uint32_t tail = meta.tail_page;
-    impl_->append(head, tail, "Row", bytes);
+    const Impl::SlotRef placed = impl_->append(head, tail, "Row", bytes);
     const bool moved = head != meta.head_page || tail != meta.tail_page;
     meta.head_page = head;
     meta.tail_page = tail;
-    if (moved) {
+    const RowId id{placed.page, placed.slot};
+    const bool indexes_changed = impl_->insert_indexes(meta, id, row);
+    if (moved || indexes_changed) {
         impl_->persist(meta);
     }
     impl_->pager.flush();
@@ -415,13 +543,20 @@ void Database::insert_row(const std::string& name, std::vector<Value> row) {
 void Database::update_row(const std::string& name, RowId id, std::vector<Value> row) {
     Impl::TableRecord& meta = impl_->require(name);
     ensure_row(meta.table, row);
+    impl_->ensure_index_values(meta, row);
     if (!impl_->chain_contains(meta.head_page, id.page_id)) {
         throw StorageError("Row is not in this table");
     }
+    const std::vector<Value> previous = decode_checked(meta.table, impl_->payload(id.page_id, id.slot));
     const std::vector<std::uint8_t> bytes = encode_values(row);
     if (bytes.size() > kMaxRecordBytes) {
         throw ExecutionError(too_big("Row", bytes.size()));
     }
+    const auto maintain = [&]() {
+        if (impl_->replace_indexes(meta, id, previous, row)) {
+            impl_->persist(meta);
+        }
+    };
 
     Page page = impl_->pager.read_page(id.page_id);
     const slotted::Slot entry = slotted::read_slot(page, id.slot);
@@ -435,11 +570,13 @@ void Database::update_row(const std::string& name, RowId id, std::vector<Value> 
             throw StorageError("Failed to update an overflow row");
         }
         impl_->pager.write_page(entry.forward_page, overflow);
+        maintain();
         impl_->pager.flush();
         return;
     }
     if (slotted::rewrite_slot(page, id.slot, bytes.data(), bytes.size())) {
         impl_->pager.write_page(id.page_id, page);
+        maintain();
         impl_->pager.flush();
         return;
     }
@@ -466,6 +603,7 @@ void Database::update_row(const std::string& name, RowId id, std::vector<Value> 
     impl_->pager.write_page(id.page_id, page);
     meta.overflow_head = overflow_id;
     impl_->persist(meta);
+    maintain();
     impl_->pager.flush();
 }
 
@@ -474,6 +612,8 @@ void Database::delete_row(const std::string& name, RowId id) {
     if (!impl_->chain_contains(meta.head_page, id.page_id)) {
         throw StorageError("Row is not in this table");
     }
+    const std::vector<Value> previous = decode_checked(meta.table, impl_->payload(id.page_id, id.slot));
+    const bool indexes_changed = impl_->remove_indexes(meta, id, previous);
     Page page = impl_->pager.read_page(id.page_id);
     const slotted::Slot entry = slotted::read_slot(page, id.slot);
     if (entry.kind == slotted::Slot::Kind::Tombstone) {
@@ -485,7 +625,7 @@ void Database::delete_row(const std::string& name, RowId id) {
     }
     slotted::tombstone_slot(page, id.slot);
     impl_->pager.write_page(id.page_id, page);
-    if (forwarded) {
+    if (forwarded || indexes_changed) {
         impl_->persist(meta);
     }
     impl_->pager.flush();
@@ -493,13 +633,170 @@ void Database::delete_row(const std::string& name, RowId id) {
 
 void Database::clear_rows(const std::string& name) {
     Impl::TableRecord& meta = impl_->require(name);
+    std::vector<std::uint32_t> fresh_roots;
+    fresh_roots.reserve(meta.indexes.size());
+    try {
+        for (std::size_t i = 0; i < meta.indexes.size(); ++i) {
+            fresh_roots.push_back(btree_create(impl_->pager));
+        }
+    } catch (...) {
+        for (const std::uint32_t root : fresh_roots) {
+            btree_destroy(impl_->pager, root);
+        }
+        throw;
+    }
+    std::vector<std::uint32_t> old_roots;
+    old_roots.reserve(meta.indexes.size());
+    for (std::size_t i = 0; i < meta.indexes.size(); ++i) {
+        old_roots.push_back(meta.indexes[i].root_page);
+        meta.indexes[i].root_page = fresh_roots[i];
+    }
     impl_->free_chain(meta.head_page);
     impl_->free_chain(meta.overflow_head);
     meta.head_page = 0;
     meta.tail_page = 0;
     meta.overflow_head = 0;
     impl_->persist(meta);
+    for (const std::uint32_t root : old_roots) {
+        btree_destroy(impl_->pager, root);
+    }
     impl_->pager.flush();
+}
+
+void Database::create_index(std::string index_name, const std::string& table, const std::string& column) {
+    if (impl_->index_owner.find(index_name) != impl_->index_owner.end()) {
+        throw ExecutionError("Index already exists: " + index_name);
+    }
+    Impl::TableRecord& meta = impl_->require(table);
+    const std::optional<std::size_t> column_index = meta.table.index_of(column);
+    if (!column_index.has_value()) {
+        throw ExecutionError("Unknown column: " + column);
+    }
+    if (*column_index > std::numeric_limits<std::uint16_t>::max()) {
+        throw ExecutionError("Too many columns to index");
+    }
+
+    Impl::IndexRecord index;
+    index.name = index_name;
+    index.column = static_cast<std::uint16_t>(*column_index);
+    index.root_page = btree_create(impl_->pager);
+    try {
+        const std::string& column_name = meta.table.columns[index.column].name;
+        for (const StoredRow& stored : scan_rows(table)) {
+            const Value& value = stored.values[index.column];
+            if (value.type() == DataType::Text && value.text().size() > kMaxIndexKeyBytes) {
+                throw ExecutionError("Value for indexed column " + column_name + " exceeds " +
+                                     std::to_string(kMaxIndexKeyBytes) + " bytes");
+            }
+            std::uint32_t root = index.root_page;
+            btree_insert(impl_->pager, root, impl_->make_key(value, stored.id));
+            index.root_page = root;
+        }
+        Impl::TableRecord copy = meta;
+        copy.indexes.push_back(index);
+        impl_->persist(copy);
+    } catch (...) {
+        btree_destroy(impl_->pager, index.root_page);
+        throw;
+    }
+    meta.indexes.push_back(index);
+    impl_->index_owner.emplace(std::move(index_name), table);
+    impl_->pager.flush();
+}
+
+void Database::drop_index(const std::string& index_name) {
+    const auto owner = impl_->index_owner.find(index_name);
+    if (owner == impl_->index_owner.end()) {
+        throw ExecutionError("No such index: " + index_name);
+    }
+    Impl::TableRecord& meta = impl_->require(owner->second);
+    const Impl::IndexRecord* found = impl_->find_index(meta, index_name);
+    if (found == nullptr) {
+        throw StorageError("Corrupt catalog entry");
+    }
+    const std::uint32_t root = found->root_page;
+    Impl::TableRecord copy = meta;
+    copy.indexes.erase(std::remove_if(copy.indexes.begin(), copy.indexes.end(),
+                                      [&](const Impl::IndexRecord& index) {
+                                          return index.name == index_name;
+                                      }),
+                       copy.indexes.end());
+    impl_->persist(copy);
+    btree_destroy(impl_->pager, root);
+    meta.indexes = std::move(copy.indexes);
+    impl_->index_owner.erase(owner);
+    impl_->pager.flush();
+}
+
+std::vector<std::string> Database::index_names() const {
+    std::vector<std::string> names;
+    names.reserve(impl_->index_owner.size());
+    for (const auto& entry : impl_->index_owner) {
+        names.push_back(entry.first);
+    }
+    return names;
+}
+
+std::optional<std::string> Database::index_for_column(const std::string& table,
+                                                     const std::string& column) const {
+    const Impl::TableRecord& meta = impl_->require(table);
+    const std::optional<std::size_t> column_index = meta.table.index_of(column);
+    if (!column_index.has_value()) {
+        return std::nullopt;
+    }
+    for (const Impl::IndexRecord& index : meta.indexes) {
+        if (index.column == *column_index) {
+            return index.name;
+        }
+    }
+    return std::nullopt;
+}
+
+std::vector<StoredRow> Database::scan_index(const std::string& table, const std::string& index_name,
+                                            const IndexRange& range) const {
+    const Impl::TableRecord& meta = impl_->require(table);
+    const Impl::IndexRecord* index = impl_->find_index(meta, index_name);
+    if (index == nullptr) {
+        throw ExecutionError("No such index: " + index_name);
+    }
+    const DataType type = meta.table.columns[index->column].type;
+    IndexBound low;
+    IndexBound high;
+    if (!range.low_unbounded) {
+        if (range.low.type() != type) {
+            throw ExecutionError("Type mismatch for column " + meta.table.columns[index->column].name);
+        }
+        low.unbounded = false;
+        low.inclusive = range.low_inclusive;
+        low.column = encode_index_column(range.low);
+    }
+    if (!range.high_unbounded) {
+        if (range.high.type() != type) {
+            throw ExecutionError("Type mismatch for column " + meta.table.columns[index->column].name);
+        }
+        high.unbounded = false;
+        high.inclusive = range.high_inclusive;
+        high.column = encode_index_column(range.high);
+    }
+
+    const std::vector<RowId> ids = btree_scan(impl_->pager, index->root_page, low, high);
+    std::vector<StoredRow> rows;
+    rows.reserve(ids.size());
+    for (const RowId id : ids) {
+        StoredRow row;
+        row.id = id;
+        row.values = decode_checked(meta.table, impl_->payload(id.page_id, id.slot));
+        rows.push_back(std::move(row));
+    }
+    return rows;
+}
+
+void Database::reset_page_reads() {
+    impl_->pager.reset_read_count();
+}
+
+std::uint64_t Database::page_reads() const {
+    return impl_->pager.read_count();
 }
 
 }  // namespace minidb

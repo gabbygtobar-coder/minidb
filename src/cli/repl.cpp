@@ -96,6 +96,7 @@ void Repl::print_help() {
          << "  .help            Show this message\n"
          << "  .tables          List tables\n"
          << "  .schema <table>  Show one table's columns\n"
+         << "  .explain <sql>   Show Index Scan or Seq Scan for one statement\n"
          << "  .exit            Exit the shell\n"
          << "  .quit            Exit the shell\n"
          << "\n"
@@ -141,6 +142,27 @@ int Repl::run() {
             try {
                 out_ << format_schema(database_.require_table(argument)) << '\n' << std::flush;
             } catch (const ExecutionError& error) {
+                out_ << "Error: " << error.what() << '\n' << std::flush;
+            }
+            continue;
+        }
+        if (is_meta(command, ".explain")) {
+            const std::string sql =
+                trim_copy(std::string_view(command).substr(std::string(".explain").size()));
+            if (sql.empty()) {
+                out_ << "Usage: .explain <sql>\n" << std::flush;
+                continue;
+            }
+            try {
+                const Statement statement = parse_statement(sql);
+                out_ << explain_statement(database_, statement) << '\n' << std::flush;
+            } catch (const ParseError& error) {
+                out_ << "Parse error at " << error.line() << ':' << error.column() << ": "
+                     << error.what() << '\n'
+                     << std::flush;
+            } catch (const ExecutionError& error) {
+                out_ << "Error: " << error.what() << '\n' << std::flush;
+            } catch (const StorageError& error) {
                 out_ << "Error: " << error.what() << '\n' << std::flush;
             }
             continue;

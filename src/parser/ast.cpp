@@ -87,6 +87,14 @@ std::string format_drop(const DropTableStatement& statement) {
     return "DropTable " + statement.name;
 }
 
+std::string format_create_index(const CreateIndexStatement& statement) {
+    return "CreateIndex " + statement.name + " ON " + statement.table + " (" + statement.column + ")";
+}
+
+std::string format_drop_index(const DropIndexStatement& statement) {
+    return "DropIndex " + statement.name;
+}
+
 std::string format_insert(const InsertStatement& statement) {
     std::string out = "Insert " + statement.table + " VALUES (";
     for (std::size_t i = 0; i < statement.values.size(); ++i) {
@@ -141,6 +149,12 @@ struct StatementFormatter {
     }
     std::string operator()(const DropTableStatement& statement) const {
         return format_drop(statement);
+    }
+    std::string operator()(const CreateIndexStatement& statement) const {
+        return format_create_index(statement);
+    }
+    std::string operator()(const DropIndexStatement& statement) const {
+        return format_drop_index(statement);
     }
     std::string operator()(const InsertStatement& statement) const {
         return format_insert(statement);

@@ -142,6 +142,8 @@ class ByteReader {
         }
     }
 
+    bool done() const { return index_ == size_; }
+
   private:
     std::string take_string(std::uint32_t length) {
         require(length);
@@ -249,6 +251,19 @@ std::vector<std::uint8_t> encode_catalog_entry(const CatalogEntry& entry) {
     writer.u32(entry.head_page);
     writer.u32(entry.tail_page);
     writer.u32(entry.overflow_head);
+    // M3 entries end here. An empty index list stays omitted so those bytes
+    // still round-trip. A non-empty list is a suffix the M4 decoder reads.
+    if (!entry.indexes.empty()) {
+        if (entry.indexes.size() > std::numeric_limits<std::uint16_t>::max()) {
+            throw StorageError("Table has too many indexes to store");
+        }
+        writer.u16(static_cast<std::uint16_t>(entry.indexes.size()));
+        for (const IndexCatalog& index : entry.indexes) {
+            writer.str16(index.name);
+            writer.u16(index.column);
+            writer.u32(index.root_page);
+        }
+    }
     return writer.take();
 }
 
@@ -270,6 +285,20 @@ CatalogEntry decode_catalog_entry(const std::uint8_t* data, std::size_t size) {
     entry.head_page = reader.u32();
     entry.tail_page = reader.u32();
     entry.overflow_head = reader.u32();
+    if (!reader.done()) {
+        const std::uint16_t indexes = reader.u16();
+        entry.indexes.reserve(indexes);
+        for (std::uint16_t i = 0; i < indexes; ++i) {
+            IndexCatalog index;
+            index.name = reader.str16();
+            index.column = reader.u16();
+            index.root_page = reader.u32();
+            if (index.name.empty() || index.root_page == 0) {
+                throw StorageError("Corrupt catalog entry");
+            }
+            entry.indexes.push_back(std::move(index));
+        }
+    }
     reader.finish();
     return entry;
 }

@@ -10,6 +10,8 @@ inline constexpr std::size_t kPageSize = 4096;
 
 inline constexpr std::uint8_t kPageTypeHeap = 1;
 inline constexpr std::uint8_t kPageTypeFree = 2;
+// B+ tree node. Layout is docs/index.md, not a slotted heap page.
+inline constexpr std::uint8_t kPageTypeIndex = 3;
 
 // Heap pages (everything except the file header) use a 16-byte header and
 // an 8-byte slot directory entry. One record has to fit in the bytes that

@@ -57,6 +57,10 @@ std::string describe(const Token& token) {
             return "'TRUE'";
         case TokenKind::KwFalse:
             return "'FALSE'";
+        case TokenKind::KwIndex:
+            return "'INDEX'";
+        case TokenKind::KwOn:
+            return "'ON'";
         case TokenKind::Star:
             return "'*'";
         case TokenKind::Comma:
@@ -320,6 +324,25 @@ class Parser {
         return statement;
     }
 
+    CreateIndexStatement parse_create_index() {
+        expect(TokenKind::KwIndex, "INDEX");
+        CreateIndexStatement statement;
+        statement.name = parse_identifier("an index name");
+        expect(TokenKind::KwOn, "ON");
+        statement.table = parse_identifier("a table name");
+        expect(TokenKind::LeftParen, "'('");
+        statement.column = parse_identifier("a column name");
+        expect(TokenKind::RightParen, "')'");
+        return statement;
+    }
+
+    DropIndexStatement parse_drop_index() {
+        expect(TokenKind::KwIndex, "INDEX");
+        DropIndexStatement statement;
+        statement.name = parse_identifier("an index name");
+        return statement;
+    }
+
     DeleteStatement parse_delete() {
         expect(TokenKind::KwFrom, "FROM");
         DeleteStatement statement;
@@ -332,9 +355,15 @@ class Parser {
 
     Statement parse_statement_body() {
         if (match(TokenKind::KwCreate)) {
+            if (check(TokenKind::KwIndex)) {
+                return parse_create_index();
+            }
             return parse_create_table();
         }
         if (match(TokenKind::KwDrop)) {
+            if (check(TokenKind::KwIndex)) {
+                return parse_drop_index();
+            }
             return parse_drop_table();
         }
         if (match(TokenKind::KwInsert)) {

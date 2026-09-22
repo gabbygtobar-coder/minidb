@@ -44,6 +44,7 @@ TEST(Repl, HelpListsMetaCommands) {
     EXPECT_TRUE(contains(output, ".help"));
     EXPECT_TRUE(contains(output, ".tables"));
     EXPECT_TRUE(contains(output, ".schema"));
+    EXPECT_TRUE(contains(output, ".explain"));
     EXPECT_TRUE(contains(output, ".exit"));
     EXPECT_TRUE(contains(output, ".quit"));
     EXPECT_TRUE(contains(output, "discarded when the shell exits."));
