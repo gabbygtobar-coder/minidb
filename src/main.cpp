@@ -9,10 +9,10 @@ void print_usage(std::ostream& out) {
     out << "Usage: minidb [data_dir]\n"
         << "\n"
         << "Starts the MiniDB shell. The optional data_dir is shown in the\n"
-        << "banner and is not created or read.\n"
+        << "banner and is not created or read. Tables live in memory and are\n"
+        << "discarded on exit.\n"
         << "\n"
-        << "Meta-commands inside the shell: .help, .exit, .quit\n"
-        << "SQL statements are parsed and printed as an AST. They are not executed.\n";
+        << "Meta-commands: .help, .tables, .schema <table>, .exit, .quit\n";
 }
 
 }  // namespace

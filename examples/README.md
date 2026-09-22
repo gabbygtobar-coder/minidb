@@ -1,27 +1,48 @@
 # Examples
 
-M1 parses SQL and prints an AST. It does not execute it.
+M2 executes SQL against an in-memory catalog. The rows below exist only until the process exits.
 
 ```text
 $ minidb
 MiniDB v0.1
 Database: local
-MiniDB> .help
-MiniDB meta-commands:
-  .help          Show this message
-  .exit          Exit the shell
-  .quit          Exit the shell
+MiniDB> CREATE TABLE users (id INT, name TEXT, active BOOLEAN, score FLOAT);
+Created table users.
+MiniDB> INSERT INTO users VALUES (1, 'ada', TRUE, 3.14);
+Inserted 1 row.
+MiniDB> INSERT INTO users VALUES (2, 'grace', FALSE, 10.0);
+Inserted 1 row.
+MiniDB> SELECT * FROM users WHERE id >= 1;
+id | name  | active | score
+---+-------+--------+------
+1  | ada   | TRUE   | 3.14
+2  | grace | FALSE  | 10.0
+(2 rows)
+MiniDB> UPDATE users SET name = 'ada lovelace' WHERE id = 1;
+Updated 1 row.
+MiniDB> DELETE FROM users WHERE active = FALSE;
+Deleted 1 row.
+MiniDB> SELECT id, name FROM users;
+id | name
+---+-------------
+1  | ada lovelace
+(1 row)
+MiniDB> .tables
+users
+MiniDB> .schema users
+CREATE TABLE users (id INT, name TEXT, active BOOLEAN, score FLOAT);
+MiniDB> DROP TABLE users;
+Dropped table users.
+MiniDB> .exit
+```
 
-SQL statements are parsed and printed as an AST. They are not executed.
-MiniDB> CREATE TABLE users (id INT, name TEXT);
-Parsed: CreateTable users (id INT, name TEXT)
+A bad statement prints an error and leaves the shell running:
+
+```text
 MiniDB> INSERT INTO users VALUES (1, 'ada');
-Parsed: Insert users VALUES (1, 'ada')
-MiniDB> SELECT * FROM users WHERE id = 1;
-Parsed: Select * FROM users WHERE id = 1
+Error: No such table: users
 MiniDB> SELECT 1;
 Parse error at 1:8: expected '*' or a column name, found integer '1'
-MiniDB> .exit
 ```
 
 An optional argument is shown as the database name and is otherwise ignored:
