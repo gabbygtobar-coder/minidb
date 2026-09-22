@@ -23,8 +23,9 @@ struct StatementResult {
 
 // Runs one parsed statement against `database`.
 //
-// The executor does not lex or parse, and it does not read or write files.
-// Invalid requests throw ExecutionError instead of mutating state:
+// The executor does not lex or parse. INSERT, SELECT, UPDATE, DELETE, CREATE,
+// and DROP go through Database, which stores rows in heap pages. Invalid
+// requests throw ExecutionError instead of mutating state:
 //   - unknown table or column
 //   - duplicate table or column on CREATE
 //   - INSERT arity that does not match the schema

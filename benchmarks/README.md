@@ -2,6 +2,4 @@
 
 No benchmarks yet.
 
-M2 executes SQL against tables in memory and throws that state away on exit. There is no page cache or index to compare.
-
-Add benchmarks here once a storage path is worth measuring (M3 and later).
+M3 reads and writes 4 KiB pages and scans the heap for every query. There is still no harness here and no index to compare against. Add timings once a number would say something the tests do not.

@@ -138,7 +138,7 @@ TEST(Executor, RejectsOrderingOnTextAndBoolean) {
                  "Operator > is not supported for BOOLEAN columns (only = and !=)");
     expect_error(database, "DELETE FROM t WHERE name < 'z'",
                  "Operator < is not supported for TEXT columns (only = and !=)");
-    EXPECT_EQ(database.require_table("t").rows.size(), 1u);
+    EXPECT_EQ(database.row_count("t"), 1u);
 }
 
 TEST(Executor, TypeMismatchAndArityLeaveTheTableUnchanged) {
@@ -169,7 +169,7 @@ TEST(Executor, TypeMismatchAndArityLeaveTheTableUnchanged) {
     expect_error(database, "UPDATE users SET id = 'no' WHERE id = 1",
                  "Type mismatch for column id: expected INT, got TEXT");
 
-    EXPECT_EQ(database.require_table("users").rows.size(), 1u);
+    EXPECT_EQ(database.row_count("users"), 1u);
     EXPECT_EQ(rows_of(exec(database, "SELECT id, name FROM users")).rows,
               (std::vector<std::vector<std::string>>{{"1", "ada"}}));
 }
@@ -180,7 +180,7 @@ TEST(Executor, UnknownNamesAndDuplicateTable) {
     exec(database, "INSERT INTO users VALUES (1, 'ada')");
 
     expect_error(database, "CREATE TABLE users (id INT)", "Table already exists: users");
-    EXPECT_EQ(database.require_table("users").rows.size(), 1u);
+    EXPECT_EQ(database.row_count("users"), 1u);
 
     expect_error(database, "INSERT INTO missing VALUES (1)", "No such table: missing");
     expect_error(database, "SELECT * FROM missing", "No such table: missing");

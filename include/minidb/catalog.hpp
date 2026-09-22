@@ -3,39 +3,73 @@
 #include "minidb/ast.hpp"
 #include "minidb/value.hpp"
 
-#include <map>
+#include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
 namespace minidb {
 
-// One in-memory table. Rows stay in insertion order. Dropping the table
-// drops its rows. Nothing here is written to disk.
+// Schema for one table. Rows are not stored here; they live in heap pages.
+// `index_of` is case-sensitive and empty when `column_name` is not a column.
 struct Table {
     std::string name;
     std::vector<ColumnDefinition> columns;
-    std::vector<std::vector<Value>> rows;
 
-    // Column names are case-sensitive. Empty when `column_name` is not here.
     std::optional<std::size_t> index_of(const std::string& column_name) const;
 };
 
-// The whole database for one process. Table names are case-sensitive.
-// Destroying the database discards every table.
+// Address of a live row in a table's primary page chain. Slot indexes stay
+// valid across updates and tombstones in the same statement. Page 0 is the
+// file header and is never a row address.
+struct RowId {
+    std::uint32_t page_id = 0;
+    std::uint16_t slot = 0;
+};
+
+struct StoredRow {
+    RowId id;
+    std::vector<Value> values;
+};
+
+// One database. The default constructor keeps pages in memory and never
+// creates a file. The path constructor opens or creates a database file.
+// Destroying the object flushes dirty pages (fflush, not fsync).
+//
+// Table names are case-sensitive. `table_names` is lexicographic.
 class Database {
   public:
+    Database();
+    explicit Database(std::string path);
+    ~Database();
+
+    Database(const Database&) = delete;
+    Database& operator=(const Database&) = delete;
+    Database(Database&&) = delete;
+    Database& operator=(Database&&) = delete;
+
     void create_table(std::string name, std::vector<ColumnDefinition> columns);
     void drop_table(const std::string& name);
 
-    // Names in lexicographic order.
     std::vector<std::string> table_names() const;
 
     Table& require_table(const std::string& name);
     const Table& require_table(const std::string& name) const;
 
+    // Heap scan in insertion order, skipping tombstones. Forwarded rows are
+    // returned at the slot they were inserted into.
+    std::size_t row_count(const std::string& name) const;
+    std::vector<StoredRow> scan_rows(const std::string& name) const;
+
+    void insert_row(const std::string& name, std::vector<Value> row);
+    void update_row(const std::string& name, RowId id, std::vector<Value> row);
+    void delete_row(const std::string& name, RowId id);
+    void clear_rows(const std::string& name);
+
   private:
-    std::map<std::string, Table> tables_;
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 // One line the shell can print for `.schema`, and that CREATE TABLE would

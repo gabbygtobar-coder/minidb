@@ -1,34 +1,39 @@
 # Architecture
 
-M2 has a process entry point, a shell, a SQL front end, an in-memory catalog, and an executor. Nothing is stored on disk.
+M3 has a process entry point, a shell, a SQL front end, a page file, and an executor. Rows and table schemas are stored in that file.
 
 ## What exists
 
-- `src/main.cpp` reads an optional data-directory argument and starts the shell. The path is printed in the banner. It is not created, opened, or written.
-- `src/cli/repl.cpp` (`minidb::Repl`) reads one line at a time. It implements `.help`, `.tables`, `.schema <table>`, `.exit`, and `.quit`. Any other line that starts with `.` is an unknown meta-command. Every other non-empty line is parsed, then executed. Parse errors and execution errors are printed; the process stays up.
+- `src/main.cpp` reads an optional database-file argument and starts the shell. The default path is `minidb.db` in the current directory. The file is created when it is missing or empty.
+- `src/cli/repl.cpp` (`minidb::Repl`) reads one line at a time. It implements `.help`, `.tables`, `.schema <table>`, `.exit`, and `.quit`. Any other line that starts with `.` is an unknown meta-command. Every other non-empty line is parsed, then executed. Parse errors, execution errors, and storage errors are printed; the process stays up. A storage error while opening the file exits the process.
 - `src/parser/lexer.cpp` (`minidb::Lexer`) turns a string into tokens. It does not know statement grammar.
 - `src/parser/parser.cpp` (`minidb::parse_statement`) turns those tokens into one AST node. It throws `ParseError` (message, 1-based line, 1-based column) and does not execute anything.
 - `src/parser/ast.cpp` formats a statement as a single summary line. That formatter is a printer for tests. The shell does not use it as a result.
-- `src/catalog/catalog.cpp` (`minidb::Database`) holds tables in a `std::map`. A table is a schema plus a vector of rows in insertion order. Dropping a table drops its rows. Destroying the database drops everything.
+- `src/storage/pager.cpp` (`minidb::Pager`) creates, reads, writes, and allocates 4 KiB pages. A free list reuses pages from `DROP` and from deleted overflow. `flush` calls `fflush` and does not `fsync`.
+- `src/storage/record.cpp` encodes rows and catalog entries as little-endian bytes with a type tag per cell. It does not dump C++ objects.
+- `src/storage/slotted_page.cpp` is the heap page: a slot directory, tombstones, and a forward pointer when an updated row no longer fits beside its neighbors.
+- `src/storage/database.cpp` (`minidb::Database`) loads the catalog from those pages and applies create, drop, insert, update, delete, and heap scan. `Database()` with no path uses an in-memory pager so tests can run without a file. Destroying a file-backed database flushes it.
 - `src/catalog/value.cpp` stores one cell as `INT`, `FLOAT`, `TEXT`, or `BOOLEAN`.
-- `src/executor/executor.cpp` (`minidb::execute`) visits one AST node and mutates the catalog or returns a result set. It does not lex, parse, or touch the filesystem.
+- `src/executor/executor.cpp` (`minidb::execute`) visits one AST node. It does not lex, parse, or open files. It calls `Database` for every read and write. `WHERE` still lives here.
 
 `include/minidb/` is the public header surface. Tests link the same static library as the `minidb` binary (`minidb_core`), so the shell and the executor can be driven without a terminal.
 
 The AST is a `std::variant` of statement structs: `CreateTableStatement`, `DropTableStatement`, `InsertStatement`, `SelectStatement`, `UpdateStatement`, and `DeleteStatement`. Literals carry the source spelling and a typed value (`int64`, `double`, `bool`, or string). The executor accepts a literal only when its kind matches the column type. `WHERE` on `TEXT` and `BOOLEAN` allows only `=` and `!=`.
 
+The on-disk layout is [storage.md](storage.md).
+
 ## What does not exist
 
-No pager, buffer pool, WAL, index, or wire protocol. Restarting the process starts from an empty catalog.
+No write-ahead log, no `fsync`, no page checksum, no index, and no wire protocol. A crash can tear a page. Queries are heap scans. Pages that have been read stay in memory; nothing evicts them.
 
 ## Intended layering
 
 ```
 CLI (M0)
   -> front end: lexer, parser, AST (M1)
-    -> in-memory catalog and executor (M2)   <- this tree
-      -> pages and buffer pool (M3)
+    -> executor (M2)
+      -> pages and heap files (M3)   <- this tree
         -> index and a small planner choice (M4)
 ```
 
-The lexer does not call the parser. The parser does not call the executor. The executor does not call the parser. Later milestones should keep that boundary and replace the in-memory rows with paged storage from the outside.
+The lexer does not call the parser. The parser does not call the executor. The executor does not call the parser, and it does not call the pager directly. Storage is reached through `Database`.

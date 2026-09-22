@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <stdexcept>
 #include <utility>
+#include <vector>
 
 namespace minidb {
 namespace {
@@ -175,7 +176,7 @@ StatementResult execute_insert(Database& database, const InsertStatement& statem
         row.push_back(value_from_literal(statement.values[i], table.columns[i].type,
                                          table.columns[i].name));
     }
-    table.rows.push_back(std::move(row));
+    database.insert_row(table.name, std::move(row));
 
     StatementResult outcome;
     outcome.message = "Inserted 1 row.";
@@ -211,7 +212,8 @@ StatementResult execute_select(Database& database, const SelectStatement& statem
     for (const std::size_t index : indexes) {
         result.column_names.push_back(table.columns[index].name);
     }
-    for (const std::vector<Value>& row : table.rows) {
+    for (const StoredRow& stored : database.scan_rows(table.name)) {
+        const std::vector<Value>& row = stored.values;
         if (predicate.has_value() && !matches(row, *predicate)) {
             continue;
         }
@@ -235,12 +237,14 @@ StatementResult execute_update(Database& database, const UpdateStatement& statem
         value_from_literal(statement.value, table.columns[index].type, statement.column);
     const std::optional<Predicate> predicate = bind_where(table, statement.where);
 
+    std::vector<StoredRow> stored_rows = database.scan_rows(table.name);
     std::size_t count = 0;
-    for (std::vector<Value>& row : table.rows) {
-        if (predicate.has_value() && !matches(row, *predicate)) {
+    for (StoredRow& stored : stored_rows) {
+        if (predicate.has_value() && !matches(stored.values, *predicate)) {
             continue;
         }
-        row[index] = value;
+        stored.values[index] = value;
+        database.update_row(table.name, stored.id, std::move(stored.values));
         ++count;
     }
 
@@ -255,14 +259,19 @@ StatementResult execute_delete(Database& database, const DeleteStatement& statem
 
     std::size_t count = 0;
     if (!predicate.has_value()) {
-        count = table.rows.size();
-        table.rows.clear();
+        count = database.row_count(table.name);
+        database.clear_rows(table.name);
     } else {
-        const auto removed = std::remove_if(
-            table.rows.begin(), table.rows.end(),
-            [&](const std::vector<Value>& row) { return matches(row, *predicate); });
-        count = static_cast<std::size_t>(table.rows.end() - removed);
-        table.rows.erase(removed, table.rows.end());
+        std::vector<RowId> ids;
+        for (const StoredRow& stored : database.scan_rows(table.name)) {
+            if (matches(stored.values, *predicate)) {
+                ids.push_back(stored.id);
+            }
+        }
+        for (const RowId id : ids) {
+            database.delete_row(table.name, id);
+        }
+        count = ids.size();
     }
 
     StatementResult outcome;

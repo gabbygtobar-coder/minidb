@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdio>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -25,15 +26,17 @@ bool contains(const std::string& haystack, const std::string& needle) {
 TEST(Repl, BannerShowsVersionAndDefaultDatabase) {
     const std::string output = run_session(".exit\n");
     EXPECT_TRUE(contains(output, "MiniDB v0.1\n"));
-    EXPECT_TRUE(contains(output, "Database: local\n"));
+    EXPECT_TRUE(contains(output, "Database: memory\n"));
     EXPECT_TRUE(contains(output, "MiniDB> "));
 }
 
-TEST(Repl, BannerShowsRequestedDataDirectory) {
+TEST(Repl, BannerShowsRequestedDatabaseFile) {
     minidb::ReplOptions options;
-    options.database = "/tmp/minidb-data";
+    options.path = "minidb-repl-banner.db";
+    std::remove(options.path.c_str());
     const std::string output = run_session(".quit\n", options);
-    EXPECT_TRUE(contains(output, "Database: /tmp/minidb-data\n"));
+    EXPECT_TRUE(contains(output, "Database: minidb-repl-banner.db\n"));
+    std::remove(options.path.c_str());
 }
 
 TEST(Repl, HelpListsMetaCommands) {
@@ -43,7 +46,7 @@ TEST(Repl, HelpListsMetaCommands) {
     EXPECT_TRUE(contains(output, ".schema"));
     EXPECT_TRUE(contains(output, ".exit"));
     EXPECT_TRUE(contains(output, ".quit"));
-    EXPECT_TRUE(contains(output, "Data is lost when the shell exits."));
+    EXPECT_TRUE(contains(output, "discarded when the shell exits."));
 }
 
 TEST(Repl, ExecutesSqlAgainstMemory) {
@@ -82,7 +85,7 @@ TEST(Repl, EmptyLinesDoNotCrashOrReject) {
 TEST(Repl, WhitespaceAroundMetaCommandsIsIgnored) {
     const std::string output = run_session("  .help  \n  .exit  \n");
     EXPECT_TRUE(contains(output, "MiniDB meta-commands:"));
-    EXPECT_TRUE(contains(output, "Data is lost when the shell exits."));
+    EXPECT_TRUE(contains(output, "discarded when the shell exits."));
     EXPECT_FALSE(contains(output, "Parse error"));
 }
 
@@ -134,10 +137,36 @@ TEST(Repl, EachSessionStartsEmpty) {
     EXPECT_FALSE(contains(second, "users"));
 }
 
+TEST(Repl, FileDatabaseSurvivesANewShell) {
+    const std::string path = "minidb-repl-persist.db";
+    std::remove(path.c_str());
+    minidb::ReplOptions options;
+    options.path = path;
+    const std::string first = run_session(
+        "CREATE TABLE users (id INT, name TEXT);\n"
+        "INSERT INTO users VALUES (1, 'ada');\n"
+        ".exit\n",
+        options);
+    EXPECT_TRUE(contains(first, "Created table users.\n"));
+    EXPECT_TRUE(contains(first, "Inserted 1 row.\n"));
+
+    const std::string second = run_session(
+        ".tables\n"
+        ".schema users\n"
+        "SELECT * FROM users;\n"
+        ".exit\n",
+        options);
+    EXPECT_TRUE(contains(second, "users\n"));
+    EXPECT_TRUE(contains(second, "CREATE TABLE users (id INT, name TEXT);\n"));
+    EXPECT_TRUE(contains(second, "1  | ada\n"));
+    EXPECT_TRUE(contains(second, "(1 row)\n"));
+    std::remove(path.c_str());
+}
+
 TEST(Repl, EndOfInputExitsCleanly) {
     const std::string output = run_session("");
     EXPECT_TRUE(contains(output, "MiniDB v0.1\n"));
-    EXPECT_TRUE(contains(output, "Database: local\n"));
+    EXPECT_TRUE(contains(output, "Database: memory\n"));
     EXPECT_TRUE(contains(output, "MiniDB> \n"));
     EXPECT_FALSE(contains(output, "Parse error"));
     EXPECT_FALSE(contains(output, "Parsed:"));
