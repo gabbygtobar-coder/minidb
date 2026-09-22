@@ -224,11 +224,79 @@ std::vector<StoredRow> read_matching(Database& database, const Table& table,
     return matched;
 }
 
-std::string plan_text(const std::string& table, const ChosenScan& scan) {
-    if (scan.use_index) {
-        return "Index Scan using " + scan.index_name + " on " + table;
+std::string quote_literal(const std::string& value) {
+    std::string out;
+    out.push_back('\'');
+    for (const char c : value) {
+        if (c == '\'') {
+            out += "''";
+        } else {
+            out.push_back(c);
+        }
     }
-    return "Seq Scan on " + table;
+    out.push_back('\'');
+    return out;
+}
+
+// Source spelling, not the normalized cell format, so `.explain` shows the
+// predicate the user wrote (`007`, `1.50`) rather than a rewritten literal.
+std::string literal_sql(const Literal& literal) {
+    switch (literal.kind) {
+        case LiteralKind::Integer:
+        case LiteralKind::Float:
+            return literal.text;
+        case LiteralKind::Boolean:
+            return literal.boolean ? "TRUE" : "FALSE";
+        case LiteralKind::String:
+            return quote_literal(literal.text);
+    }
+    throw std::logic_error("unknown literal kind");
+}
+
+std::string predicate_sql(const WhereClause& where) {
+    return where.column + " " + comparison_symbol(where.op) + " " + literal_sql(where.value);
+}
+
+std::string plan_text(const std::string& table, const ChosenScan& scan,
+                      const std::optional<std::string>& predicate) {
+    std::string out;
+    if (scan.use_index) {
+        out = "Index Scan using " + scan.index_name + " on " + table;
+        if (predicate.has_value()) {
+            out += "\n  Index Cond: ";
+            out += *predicate;
+        }
+        return out;
+    }
+    out = "Seq Scan on " + table;
+    if (predicate.has_value()) {
+        out += "\n  Filter: ";
+        out += *predicate;
+    }
+    return out;
+}
+
+constexpr const char* kWriteNote = "(read plan only; EXPLAIN does not describe the write)";
+constexpr const char* kNoScanDml =
+    "No scan\n(CREATE, DROP, and INSERT do not scan a table)";
+constexpr const char* kNoScanDelete =
+    "No scan\n(DELETE without WHERE clears the heap and does not walk rows)";
+
+std::string explain_read(const Database& database, const std::string& table_name,
+                         const std::optional<WhereClause>& where, bool select_only) {
+    const Table& table = database.require_table(table_name);
+    const std::optional<Predicate> predicate = bind_where(table, where);
+    const ChosenScan scan = choose_scan(database, table, predicate);
+    std::optional<std::string> pred;
+    if (where.has_value()) {
+        pred = predicate_sql(*where);
+    }
+    std::string text = plan_text(table.name, scan, pred);
+    if (!select_only) {
+        text += '\n';
+        text += kWriteNote;
+    }
+    return text;
 }
 
 StatementResult execute_create(Database& database, const CreateTableStatement& statement) {
@@ -416,24 +484,23 @@ StatementResult execute(Database& database, const Statement& statement) {
 
 std::string explain_statement(const Database& database, const Statement& statement) {
     if (const auto* select = std::get_if<SelectStatement>(&statement)) {
-        const Table& table = database.require_table(select->table);
-        const std::optional<Predicate> predicate = bind_where(table, select->where);
-        return plan_text(table.name, choose_scan(database, table, predicate));
+        return explain_read(database, select->table, select->where, true);
     }
     if (const auto* update = std::get_if<UpdateStatement>(&statement)) {
         const Table& table = database.require_table(update->table);
         require_column(table, update->column);
         value_from_literal(update->value, table.columns[require_column(table, update->column)].type,
                            update->column);
-        const std::optional<Predicate> predicate = bind_where(table, update->where);
-        return plan_text(table.name, choose_scan(database, table, predicate));
+        return explain_read(database, update->table, update->where, false);
     }
     if (const auto* deleted = std::get_if<DeleteStatement>(&statement)) {
-        const Table& table = database.require_table(deleted->table);
-        const std::optional<Predicate> predicate = bind_where(table, deleted->where);
-        return plan_text(table.name, choose_scan(database, table, predicate));
+        if (!deleted->where.has_value()) {
+            database.require_table(deleted->table);
+            return kNoScanDelete;
+        }
+        return explain_read(database, deleted->table, deleted->where, false);
     }
-    return "No scan";
+    return kNoScanDml;
 }
 
 std::string format_result_set(const ResultSet& result) {

@@ -33,6 +33,13 @@ struct StoredRow {
     std::vector<Value> values;
 };
 
+// One secondary index, for `.indexes`. `name` is unique in the database.
+struct IndexInfo {
+    std::string name;
+    std::string table;
+    std::string column;
+};
+
 // One database. The default constructor keeps pages in memory and never
 // creates a file. The path constructor opens or creates a database file.
 // Destroying the object flushes dirty pages (fflush, not fsync).
@@ -68,11 +75,13 @@ class Database {
     void clear_rows(const std::string& name);
 
     // Single-column secondary indexes. Names are unique in the database and
-    // case-sensitive. `index_names` is lexicographic. `index_for_column`
-    // returns the oldest index on that column, if any.
+    // case-sensitive. `index_names` and `list_indexes` are lexicographic by
+    // index name. `index_for_column` returns the oldest index on that column,
+    // if any.
     void create_index(std::string index_name, const std::string& table, const std::string& column);
     void drop_index(const std::string& index_name);
     std::vector<std::string> index_names() const;
+    std::vector<IndexInfo> list_indexes() const;
     std::optional<std::string> index_for_column(const std::string& table,
                                                 const std::string& column) const;
 

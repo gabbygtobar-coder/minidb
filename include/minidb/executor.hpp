@@ -44,9 +44,18 @@ struct StatementResult {
 // index order. Heap scans stay in insertion order.
 StatementResult execute(Database& database, const Statement& statement);
 
-// Plan text for `.explain`. Does not modify the database. SELECT, UPDATE, and
-// DELETE report `Index Scan using <name> on <table>` or `Seq Scan on <table>`.
-// Other statements report `No scan`.
+// Plan text for `.explain`. Does not modify the database and does not estimate
+// a cost or a row count.
+//
+// SELECT, and UPDATE or DELETE that read rows, report one of:
+//   Index Scan using <name> on <table>
+//     Index Cond: <column> <op> <literal>
+//   Seq Scan on <table>
+//     Filter: <column> <op> <literal>
+// The filter or index condition line is omitted when there is no WHERE.
+// UPDATE and DELETE append a note that the write itself is not described.
+// DELETE without WHERE, and CREATE, DROP, and INSERT, report `No scan` plus
+// why that statement does not walk rows.
 std::string explain_statement(const Database& database, const Statement& statement);
 
 // Aligned text table plus a "(N row)" / "(N rows)" footer. No trailing newline.

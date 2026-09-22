@@ -17,7 +17,8 @@ void print_usage(std::ostream& out) {
         << "fsync, and it has no write-ahead log, so a crash can tear a page or\n"
         << "lose writes the operating system has not flushed to disk.\n"
         << "\n"
-        << "Meta-commands: .help, .tables, .schema <table>, .exit, .quit\n";
+        << "Meta-commands: .help, .tables, .schema <table>, .indexes, .explain <sql>,\n"
+        << ".exit, .quit. Command names are case-insensitive.\n";
 }
 
 }  // namespace

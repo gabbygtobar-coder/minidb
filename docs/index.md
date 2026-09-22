@@ -79,13 +79,17 @@ Comparison of the encoded bytes, shorter key first when one is a prefix of the o
 
 ## What uses the index
 
-`.explain <sql>` prints the plan and does not run the statement.
+`.explain <sql>` and `.EXPLAIN <sql>` print the plan and do not run the statement. There is no cost, no row estimate, and no choice between two predicates. The text is the same decision `execute` uses. Integer and float literals keep the spelling from the statement (`007`, `1.50`).
 
 | Plan text | When |
 | --- | --- |
 | `Index Scan using <name> on <table>` | `SELECT`, `UPDATE`, or `DELETE` has a `WHERE` of `=`, `<`, `>`, `<=`, or `>=` on a column that has an index |
-| `Seq Scan on <table>` | no `WHERE`, a `!=` comparison, or no index on that column |
-| `No scan` | `CREATE`, `DROP`, `INSERT` |
+| `  Index Cond: <column> <op> <literal>` | that index scan's predicate |
+| `Seq Scan on <table>` | `SELECT` or `UPDATE` reads the heap, or `DELETE` has a `WHERE` the index cannot serve |
+| `  Filter: <column> <op> <literal>` | that sequential scan has a `WHERE` clause |
+| `No scan` | `CREATE`, `DROP`, `INSERT`, and `DELETE` without `WHERE` |
+
+`UPDATE`, and `DELETE` that reads rows, add `(read plan only; EXPLAIN does not describe the write)`. `DELETE` without `WHERE` clears the heap and does not walk rows, so it is `No scan` rather than a sequential scan. `CREATE`, `DROP`, and `INSERT` say they do not scan a table.
 
 If several indexes cover the same column, the oldest one is used. `!=` does not use an index. `TEXT` and `BOOLEAN` still reject `<`, `>`, `<=`, and `>=` at execution time; the tree can order those bytes, and the SQL layer does not offer the operators.
 
@@ -100,6 +104,8 @@ An index scan returns rows in index order. A heap scan returns them in insertion
 `Database::page_reads` counts calls to `Pager::read_page`, including pages already in the process cache. It is not a count of disk I/O.
 
 `Index.PointLookupReadsFewerPagesThanAScan` inserts 500 rows `(id INT, name TEXT)` and runs `SELECT id FROM t WHERE id = 250`. On a Debug build of this tree the heap scan performed **504** logical reads and the same statement after `CREATE INDEX idx ON t (id)` performed **5**. The scan number is large because the heap walker reads a page and then reads it again for every live row on it. The index path does not walk the other heap pages. The test's check is the inequality, not those two constants.
+
+A later Release run of 10,000 rows is checked in at [bench/results.md](../bench/results.md). That file is one measurement, with the machine and the command that produced it.
 
 ## Limitations
 

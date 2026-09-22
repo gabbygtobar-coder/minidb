@@ -45,6 +45,7 @@ TEST(Repl, HelpListsMetaCommands) {
     EXPECT_TRUE(contains(output, ".tables"));
     EXPECT_TRUE(contains(output, ".schema"));
     EXPECT_TRUE(contains(output, ".explain"));
+    EXPECT_TRUE(contains(output, ".indexes"));
     EXPECT_TRUE(contains(output, ".exit"));
     EXPECT_TRUE(contains(output, ".quit"));
     EXPECT_TRUE(contains(output, "discarded when the shell exits."));
@@ -162,6 +163,27 @@ TEST(Repl, FileDatabaseSurvivesANewShell) {
     EXPECT_TRUE(contains(second, "1  | ada\n"));
     EXPECT_TRUE(contains(second, "(1 row)\n"));
     std::remove(path.c_str());
+}
+
+TEST(Repl, IndexesAndExplainAreCaseInsensitive) {
+    const std::string output = run_session(
+        ".indexes\n"
+        "CREATE TABLE users (id INT, name TEXT);\n"
+        "CREATE INDEX idx_id ON users (id);\n"
+        "CREATE INDEX idx_name ON users (name);\n"
+        ".INDEXES\n"
+        ".EXPLAIN SELECT name FROM users WHERE id = 1\n"
+        ".explain UPDATE users SET name = 'a' WHERE id = 1\n"
+        ".explain INSERT INTO users VALUES (1, 'a')\n"
+        ".explain DELETE FROM users\n"
+        ".exit\n");
+    EXPECT_TRUE(contains(output, "(no indexes)\n"));
+    EXPECT_TRUE(contains(output, "idx_id ON users (id)\n"));
+    EXPECT_TRUE(contains(output, "idx_name ON users (name)\n"));
+    EXPECT_TRUE(contains(output, "Index Scan using idx_id on users\n  Index Cond: id = 1\n"));
+    EXPECT_TRUE(contains(output, "(read plan only; EXPLAIN does not describe the write)\n"));
+    EXPECT_TRUE(contains(output, "No scan\n(CREATE, DROP, and INSERT do not scan a table)\n"));
+    EXPECT_TRUE(contains(output, "No scan\n(DELETE without WHERE clears the heap and does not walk rows)\n"));
 }
 
 TEST(Repl, EndOfInputExitsCleanly) {

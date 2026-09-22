@@ -737,6 +737,24 @@ std::vector<std::string> Database::index_names() const {
     return names;
 }
 
+std::vector<IndexInfo> Database::list_indexes() const {
+    std::vector<IndexInfo> listed;
+    listed.reserve(impl_->index_owner.size());
+    for (const auto& entry : impl_->index_owner) {
+        const Impl::TableRecord& meta = impl_->require(entry.second);
+        const Impl::IndexRecord* index = impl_->find_index(meta, entry.first);
+        if (index == nullptr || index->column >= meta.table.columns.size()) {
+            throw StorageError("Corrupt catalog entry");
+        }
+        IndexInfo info;
+        info.name = index->name;
+        info.table = meta.table.name;
+        info.column = meta.table.columns[index->column].name;
+        listed.push_back(std::move(info));
+    }
+    return listed;
+}
+
 std::optional<std::string> Database::index_for_column(const std::string& table,
                                                      const std::string& column) const {
     const Impl::TableRecord& meta = impl_->require(table);

@@ -53,7 +53,8 @@ class TempPath {
 TEST(Index, CreateInsertLookupUpdateDeleteAndDrop) {
     minidb::Database database;
     exec(database, "CREATE TABLE users (id INT, name TEXT, active BOOLEAN, score FLOAT)");
-    EXPECT_EQ(explain(database, "SELECT * FROM users WHERE id = 1"), "Seq Scan on users");
+    EXPECT_EQ(explain(database, "SELECT * FROM users WHERE id = 1"),
+              "Seq Scan on users\n  Filter: id = 1");
 
     EXPECT_EQ(exec(database, "CREATE INDEX idx_id ON users (id)").message,
               "Created index idx_id on users(id).");
@@ -71,11 +72,15 @@ TEST(Index, CreateInsertLookupUpdateDeleteAndDrop) {
     exec(database, "INSERT INTO users VALUES (1, 'alan', TRUE, 1.5)");
     exec(database, "INSERT INTO users VALUES (3, 'linus', FALSE, 0.5)");
 
-    EXPECT_EQ(explain(database, "SELECT * FROM users WHERE id = 1"), "Index Scan using idx_id on users");
-    EXPECT_EQ(explain(database, "SELECT * FROM users WHERE id != 1"), "Seq Scan on users");
+    EXPECT_EQ(explain(database, "SELECT * FROM users WHERE id = 1"),
+              "Index Scan using idx_id on users\n  Index Cond: id = 1");
+    EXPECT_EQ(explain(database, "SELECT * FROM users WHERE id != 1"),
+              "Seq Scan on users\n  Filter: id != 1");
     EXPECT_EQ(explain(database, "SELECT * FROM users"), "Seq Scan on users");
-    EXPECT_EQ(explain(database, "SELECT * FROM users WHERE id > 1"), "Index Scan using idx_id on users");
-    EXPECT_EQ(explain(database, "INSERT INTO users VALUES (4, 'kay', TRUE, 1.0)"), "No scan");
+    EXPECT_EQ(explain(database, "SELECT * FROM users WHERE id > 1"),
+              "Index Scan using idx_id on users\n  Index Cond: id > 1");
+    EXPECT_EQ(explain(database, "INSERT INTO users VALUES (4, 'kay', TRUE, 1.0)"),
+              "No scan\n(CREATE, DROP, and INSERT do not scan a table)");
 
     const minidb::ResultSet by_id = rows_of(exec(database, "SELECT name FROM users WHERE id = 1"));
     EXPECT_EQ(sorted_rows(by_id), (std::vector<std::vector<std::string>>{{"ada"}, {"alan"}}));
@@ -119,7 +124,8 @@ TEST(Index, CreateInsertLookupUpdateDeleteAndDrop) {
     EXPECT_EQ(left.rows[0], (std::vector<std::string>{"grace"}));
 
     EXPECT_EQ(exec(database, "DROP INDEX idx_id").message, "Dropped index idx_id.");
-    EXPECT_EQ(explain(database, "SELECT * FROM users WHERE id = 2"), "Seq Scan on users");
+    EXPECT_EQ(explain(database, "SELECT * FROM users WHERE id = 2"),
+              "Seq Scan on users\n  Filter: id = 2");
     const minidb::ResultSet after_drop = rows_of(exec(database, "SELECT name FROM users WHERE id = 2"));
     ASSERT_EQ(after_drop.rows.size(), 1u);
     EXPECT_EQ(after_drop.rows[0], (std::vector<std::string>{"grace"}));
@@ -167,7 +173,8 @@ TEST(Index, ReopenKeepsTheIndex) {
     {
         minidb::Database database(file.path());
         EXPECT_EQ(database.index_names(), std::vector<std::string>{"idx"});
-        EXPECT_EQ(explain(database, "SELECT name FROM users WHERE id = 2"), "Index Scan using idx on users");
+        EXPECT_EQ(explain(database, "SELECT name FROM users WHERE id = 2"),
+                  "Index Scan using idx on users\n  Index Cond: id = 2");
         const minidb::ResultSet result = rows_of(exec(database, "SELECT name FROM users WHERE id = 2"));
         ASSERT_EQ(result.rows.size(), 1u);
         EXPECT_EQ(result.rows[0], (std::vector<std::string>{"grace"}));
@@ -219,6 +226,34 @@ TEST(Index, RejectsUnknownNamesAndOversizedKeys) {
     EXPECT_THROW(exec(database, "CREATE INDEX idx ON t (note)"), minidb::ExecutionError);
     EXPECT_TRUE(database.index_names().empty());
     EXPECT_EQ(rows_of(exec(database, "SELECT id FROM t")).rows.size(), 1u);
+}
+
+TEST(Index, ExplainPrintsThePredicateAndStatesItsLimits) {
+    minidb::Database database;
+    exec(database, "CREATE TABLE users (id INT, name TEXT, active BOOLEAN, score FLOAT)");
+    EXPECT_EQ(explain(database, "SELECT name FROM users WHERE id = 007"),
+              "Seq Scan on users\n  Filter: id = 007");
+    EXPECT_EQ(explain(database, "SELECT id FROM users WHERE name = 'it''s'"),
+              "Seq Scan on users\n  Filter: name = 'it''s'");
+    EXPECT_EQ(explain(database, "SELECT id FROM users WHERE active = FALSE"),
+              "Seq Scan on users\n  Filter: active = FALSE");
+
+    exec(database, "CREATE INDEX idx_id ON users (id)");
+    exec(database, "CREATE INDEX idx_score ON users (score)");
+    EXPECT_EQ(explain(database, "SELECT * FROM users WHERE score >= 1.50"),
+              "Index Scan using idx_score on users\n  Index Cond: score >= 1.50");
+    EXPECT_EQ(explain(database, "UPDATE users SET name = 'a' WHERE id = 1"),
+              "Index Scan using idx_id on users\n  Index Cond: id = 1\n"
+              "(read plan only; EXPLAIN does not describe the write)");
+    EXPECT_EQ(explain(database, "DELETE FROM users WHERE active = TRUE"),
+              "Seq Scan on users\n  Filter: active = TRUE\n"
+              "(read plan only; EXPLAIN does not describe the write)");
+    EXPECT_EQ(explain(database, "DELETE FROM users"),
+              "No scan\n(DELETE without WHERE clears the heap and does not walk rows)");
+    EXPECT_EQ(explain(database, "CREATE INDEX idx_name ON users (name)"),
+              "No scan\n(CREATE, DROP, and INSERT do not scan a table)");
+    EXPECT_EQ(explain(database, "DROP TABLE users"),
+              "No scan\n(CREATE, DROP, and INSERT do not scan a table)");
 }
 
 TEST(Index, ExplainMetaCommandDoesNotRunTheStatement) {
