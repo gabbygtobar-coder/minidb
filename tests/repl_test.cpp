@@ -43,29 +43,48 @@ TEST(Repl, HelpListsMetaCommands) {
     EXPECT_TRUE(contains(output, ".quit"));
 }
 
-TEST(Repl, UnknownInputIsRejected) {
-    const std::string output = run_session("SELECT 1;\n.tables\n.exit\n");
-    const std::string message = "SQL engine is not implemented yet (M1+).";
-    const auto first = output.find(message);
-    ASSERT_NE(first, std::string::npos);
-    EXPECT_NE(output.find(message, first + message.size()), std::string::npos);
+TEST(Repl, ParsesSqlAndPrintsAst) {
+    const std::string output = run_session(
+        "CREATE TABLE users (id INT, name TEXT);\n"
+        "  SELECT * FROM users WHERE id = 1  \n"
+        ".exit\n");
+    EXPECT_TRUE(contains(output, "Parsed: CreateTable users (id INT, name TEXT)\n"));
+    EXPECT_TRUE(contains(output, "Parsed: Select * FROM users WHERE id = 1\n"));
+    EXPECT_FALSE(contains(output, "rows"));
+    EXPECT_FALSE(contains(output, "SQL engine is not implemented"));
+}
+
+TEST(Repl, ReportsParseErrorsWithoutExecuting) {
+    const std::string output = run_session("SELECT 1;\n.exit\n");
+    EXPECT_TRUE(contains(output, "Parse error at 1:8: expected '*' or a column name, found integer '1'\n"));
+    EXPECT_FALSE(contains(output, "Parsed:"));
+}
+
+TEST(Repl, UnknownMetaCommandIsRejected) {
+    const std::string output = run_session(".tables\n.exit\n");
+    EXPECT_TRUE(contains(output, "Unknown meta-command: .tables\n"));
+    EXPECT_FALSE(contains(output, "Parsed:"));
+    EXPECT_FALSE(contains(output, "Parse error"));
 }
 
 TEST(Repl, EmptyLinesDoNotCrashOrReject) {
     const std::string output = run_session("\n   \n\t\n.exit\n");
-    EXPECT_FALSE(contains(output, "SQL engine is not implemented yet (M1+)."));
+    EXPECT_FALSE(contains(output, "Parse error"));
+    EXPECT_FALSE(contains(output, "Parsed:"));
     EXPECT_TRUE(contains(output, "MiniDB> "));
 }
 
 TEST(Repl, WhitespaceAroundMetaCommandsIsIgnored) {
     const std::string output = run_session("  .help  \n  .exit  \n");
     EXPECT_TRUE(contains(output, "MiniDB meta-commands:"));
-    EXPECT_FALSE(contains(output, "SQL engine is not implemented yet (M1+)."));
+    EXPECT_TRUE(contains(output, "They are not executed."));
+    EXPECT_FALSE(contains(output, "Parse error"));
 }
 
 TEST(Repl, QuitStopsBeforeLaterInput) {
     const std::string output = run_session(".quit\nSELECT 1;\n");
-    EXPECT_FALSE(contains(output, "SQL engine is not implemented yet (M1+)."));
+    EXPECT_FALSE(contains(output, "Parse error"));
+    EXPECT_FALSE(contains(output, "Parsed:"));
 }
 
 TEST(Repl, EndOfInputExitsCleanly) {
@@ -73,5 +92,6 @@ TEST(Repl, EndOfInputExitsCleanly) {
     EXPECT_TRUE(contains(output, "MiniDB v0.1\n"));
     EXPECT_TRUE(contains(output, "Database: local\n"));
     EXPECT_TRUE(contains(output, "MiniDB> \n"));
-    EXPECT_FALSE(contains(output, "SQL engine is not implemented yet (M1+)."));
+    EXPECT_FALSE(contains(output, "Parse error"));
+    EXPECT_FALSE(contains(output, "Parsed:"));
 }

@@ -1,6 +1,6 @@
 # Examples
 
-M0 only has the shell stub. This session is what `minidb` does today.
+M1 parses SQL and prints an AST. It does not execute it.
 
 ```text
 $ minidb
@@ -12,9 +12,15 @@ MiniDB meta-commands:
   .exit          Exit the shell
   .quit          Exit the shell
 
-No SQL is available in M0. Other input is rejected until M1.
+SQL statements are parsed and printed as an AST. They are not executed.
+MiniDB> CREATE TABLE users (id INT, name TEXT);
+Parsed: CreateTable users (id INT, name TEXT)
+MiniDB> INSERT INTO users VALUES (1, 'ada');
+Parsed: Insert users VALUES (1, 'ada')
+MiniDB> SELECT * FROM users WHERE id = 1;
+Parsed: Select * FROM users WHERE id = 1
 MiniDB> SELECT 1;
-SQL engine is not implemented yet (M1+).
+Parse error at 1:8: expected '*' or a column name, found integer '1'
 MiniDB> .exit
 ```
 

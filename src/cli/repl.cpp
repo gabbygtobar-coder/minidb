@@ -1,5 +1,6 @@
 #include "minidb/repl.hpp"
 
+#include "minidb/parser.hpp"
 #include "minidb/version.hpp"
 
 #include <iostream>
@@ -10,8 +11,6 @@ namespace minidb {
 namespace {
 
 constexpr std::string_view kWhitespace = " \t\r\n\v\f";
-constexpr std::string_view kNotImplemented =
-    "SQL engine is not implemented yet (M1+).";
 
 std::string trim_copy(std::string_view text) {
     const auto begin = text.find_first_not_of(kWhitespace);
@@ -43,7 +42,7 @@ void Repl::print_help() {
          << "  .exit          Exit the shell\n"
          << "  .quit          Exit the shell\n"
          << "\n"
-         << "No SQL is available in M0. Other input is rejected until M1.\n"
+         << "SQL statements are parsed and printed as an AST. They are not executed.\n"
          << std::flush;
 }
 
@@ -70,8 +69,19 @@ int Repl::run() {
             print_help();
             continue;
         }
+        if (command.front() == '.') {
+            out_ << "Unknown meta-command: " << command << '\n' << std::flush;
+            continue;
+        }
 
-        out_ << kNotImplemented << '\n' << std::flush;
+        try {
+            const Statement statement = parse_statement(command);
+            out_ << "Parsed: " << format_statement(statement) << '\n' << std::flush;
+        } catch (const ParseError& error) {
+            out_ << "Parse error at " << error.line() << ':' << error.column() << ": "
+                 << error.what() << '\n'
+                 << std::flush;
+        }
     }
 }
 

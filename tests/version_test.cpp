@@ -4,7 +4,7 @@
 
 #include <string>
 
-TEST(Version, ReportsM0Release) {
+TEST(Version, ReportsRelease) {
     EXPECT_FALSE(minidb::kVersion.empty());
     EXPECT_EQ(std::string(minidb::kVersion), "0.1");
 }
